@@ -18,7 +18,7 @@ const fieldClass =
 const buttonClass =
   "w-fit rounded bg-zinc-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900";
 
-export function LeaveImportForm() {
+export function LeaveImportForm({ appReadonly = false }: { appReadonly?: boolean }) {
   const [headersState, parseAction, parsePending] = useActionState(parseImportHeadersAction, undefined);
   const [previewState, previewAction, previewPending] = useActionState(previewImportAction, undefined);
   const [commitState, commitAction, commitPending] = useActionState(commitImportAction, undefined);
@@ -111,8 +111,8 @@ export function LeaveImportForm() {
           {fields.map((field) => (
             <input key={field} type="hidden" name={`map_${field}`} value={mappedValue(preview.map, field)} />
           ))}
-          <button className={buttonClass} type="submit" disabled={commitPending}>
-            Commit import
+          <button className={buttonClass} type="submit" disabled={commitPending || appReadonly}>
+            {appReadonly ? "App is frozen" : "Commit import"}
           </button>
         </form>
       ) : null}

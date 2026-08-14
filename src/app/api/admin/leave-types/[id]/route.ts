@@ -11,6 +11,7 @@ import {
   updateLeaveType,
   type LeaveTypeInput,
   type LeaveTypeRecord,
+  type LeaveTypeWriteFail,
   type LeaveTypeWriteOptions,
 } from "@/server/leave-types";
 
@@ -20,14 +21,12 @@ export type AdminLeaveTypeItemDeps = AdminGateDeps & {
     id: string,
     input: LeaveTypeInput,
     options?: LeaveTypeWriteOptions,
-  ) => Promise<
-    { ok: true; leaveType: LeaveTypeRecord } | { ok: false; error: string; status: 404 | 409 }
-  >;
+  ) => Promise<{ ok: true; leaveType: LeaveTypeRecord } | LeaveTypeWriteFail>;
   deleteType: (
     orgId: string,
     id: string,
     options?: LeaveTypeWriteOptions,
-  ) => Promise<{ ok: true } | { ok: false; error: string; status: 404 | 409 }>;
+  ) => Promise<{ ok: true } | LeaveTypeWriteFail>;
 };
 
 const defaultDeps: AdminLeaveTypeItemDeps = {
@@ -60,7 +59,10 @@ export async function patchAdminLeaveType(
     actorId: gate.context.actor.id,
   });
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+    return NextResponse.json(
+      { error: result.error, ...(result.code ? { code: result.code } : {}) },
+      { status: result.status },
+    );
   }
   return NextResponse.json({ leaveType: result.leaveType });
 }
@@ -79,7 +81,10 @@ export async function deleteAdminLeaveType(
     actorId: gate.context.actor.id,
   });
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+    return NextResponse.json(
+      { error: result.error, ...(result.code ? { code: result.code } : {}) },
+      { status: result.status },
+    );
   }
   return NextResponse.json({ ok: true });
 }

@@ -32,7 +32,10 @@ export async function postAdminImportReverse(
     deps.store,
   );
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+    return NextResponse.json(
+      { error: result.error, ...(result.code ? { code: result.code } : {}) },
+      { status: result.status },
+    );
   }
   return NextResponse.json({
     batch: result.batch,

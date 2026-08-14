@@ -1,11 +1,15 @@
 import { requireAdmin } from "@/server/auth";
 import { loadOrgHolidays } from "@/server/holidays/import";
+import { getOrgSettings } from "@/server/settings";
 import { deleteHolidayAction } from "./actions";
 import { HolidayImportForm } from "./holiday-import-form";
 
 export default async function AdminHolidaysPage() {
   const { employee } = await requireAdmin();
-  const rows = await loadOrgHolidays(employee.orgId);
+  const [rows, settings] = await Promise.all([
+    loadOrgHolidays(employee.orgId),
+    getOrgSettings(employee.orgId),
+  ]);
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-6 py-10">
@@ -21,7 +25,7 @@ export default async function AdminHolidaysPage() {
         </p>
       </header>
 
-      <HolidayImportForm />
+      <HolidayImportForm appReadonly={settings.appReadonly} />
 
       <section>
         <h2 className="text-lg font-medium">Imported dates</h2>
@@ -51,7 +55,11 @@ export default async function AdminHolidaysPage() {
                     <td className="py-2">
                       <form action={deleteHolidayAction}>
                         <input type="hidden" name="id" value={row.id} />
-                        <button className="text-red-600 underline" type="submit">
+                        <button
+                          className="text-red-600 underline disabled:opacity-60"
+                          type="submit"
+                          disabled={settings.appReadonly}
+                        >
                           Delete
                         </button>
                       </form>

@@ -30,9 +30,17 @@ export type LeaveFormProps = {
   weekendDays: readonly number[];
   workdayMinutes: number;
   today: string;
+  appReadonly?: boolean;
 };
 
-export function LeaveForm({ types, holidays, weekendDays, workdayMinutes, today }: LeaveFormProps) {
+export function LeaveForm({
+  types,
+  holidays,
+  weekendDays,
+  workdayMinutes,
+  today,
+  appReadonly = false,
+}: LeaveFormProps) {
   const [state, action, pending] = useActionState(submitLeaveAction, undefined);
   const [formKey, setFormKey] = useState(0);
   const [startDate, setStartDate] = useState("");
@@ -187,9 +195,9 @@ export function LeaveForm({ types, holidays, weekendDays, workdayMinutes, today 
         className={`${buttonClass} w-fit`}
         type="submit"
         tabIndex={7}
-        disabled={pending || types.length === 0 || !preview.ok}
+        disabled={pending || appReadonly || types.length === 0 || !preview.ok}
       >
-        {pending ? "Submitting…" : "Submit"}
+        {pending ? "Submitting…" : appReadonly ? "App is frozen" : "Submit"}
       </button>
     </form>
   );

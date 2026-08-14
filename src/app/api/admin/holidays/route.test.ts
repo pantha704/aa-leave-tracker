@@ -36,6 +36,18 @@ describe("GET /api/admin/holidays", () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ holidays: [] });
   });
+
+  it("still lists holidays when the org is frozen", async () => {
+    const res = await getAdminHolidays(req("/api/admin/holidays"), {
+      getAuthzActor: async () => ({ id: "admin", role: "admin" }),
+      loadOrgId: async () => "org-1",
+      listHolidays: async () => [{ id: "h1", onDate: "2026-01-01", name: "NY", region: null }],
+    });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      holidays: [{ id: "h1", onDate: "2026-01-01", name: "NY", region: null }],
+    });
+  });
 });
 
 describe("POST /api/admin/holidays/import", () => {

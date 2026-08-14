@@ -94,6 +94,32 @@ export async function isAppReadonly(
   return (await getOrgSettings(orgId, store)).appReadonly;
 }
 
+export type AppReadonlyFail = {
+  ok: false;
+  status: 423;
+  code: typeof APP_READONLY_CODE;
+  message: string;
+  error: string;
+};
+
+export function appReadonlyFail(): AppReadonlyFail {
+  return {
+    ok: false,
+    status: 423,
+    code: APP_READONLY_CODE,
+    message: APP_READONLY_MESSAGE,
+    error: APP_READONLY_MESSAGE,
+  };
+}
+
+export async function rejectIfReadonly(
+  orgId: string,
+  check?: (orgId: string) => Promise<boolean>,
+): Promise<AppReadonlyFail | null> {
+  if (await (check ?? isAppReadonly)(orgId)) return appReadonlyFail();
+  return null;
+}
+
 export async function setAppReadonly(input: {
   orgId: string;
   appReadonly: boolean;

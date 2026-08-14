@@ -3,7 +3,7 @@
 import { useActionState } from "react";
 import { importHolidaysAction, type HolidayImportState } from "./actions";
 
-export function HolidayImportForm() {
+export function HolidayImportForm({ appReadonly = false }: { appReadonly?: boolean }) {
   const [state, action, pending] = useActionState(importHolidaysAction, undefined);
 
   return (
@@ -30,9 +30,9 @@ export function HolidayImportForm() {
       <button
         className="w-fit rounded bg-zinc-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
         type="submit"
-        disabled={pending}
+        disabled={pending || appReadonly}
       >
-        Import CSV
+        {appReadonly ? "App is frozen" : "Import CSV"}
       </button>
     </form>
   );

@@ -81,6 +81,12 @@ export async function postAdminHolidaysImport(
     writeAudit: writeAuditEvent,
   });
   if (!result.ok) {
+    if ("status" in result) {
+      return NextResponse.json(
+        { error: result.error, code: result.code },
+        { status: result.status },
+      );
+    }
     return NextResponse.json(
       { error: "csv_errors", errors: result.errors, errorCsv: result.errorCsv },
       { status: 400 },

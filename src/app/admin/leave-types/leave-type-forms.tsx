@@ -122,7 +122,7 @@ function LeaveTypeFields({
   );
 }
 
-export function CreateLeaveTypeForm() {
+export function CreateLeaveTypeForm({ appReadonly = false }: { appReadonly?: boolean }) {
   const [state, action, pending] = useActionState(createLeaveTypeAction, undefined);
   const [formKey, setFormKey] = useState(0);
 
@@ -136,14 +136,20 @@ export function CreateLeaveTypeForm() {
         <LeaveTypeFields />
       </div>
       <FormAlert state={state} />
-      <button className={`${buttonClass} w-fit`} type="submit" disabled={pending}>
-        Create leave type
+      <button className={`${buttonClass} w-fit`} type="submit" disabled={pending || appReadonly}>
+        {appReadonly ? "App is frozen" : "Create leave type"}
       </button>
     </form>
   );
 }
 
-export function EditLeaveTypeForm({ leaveType }: { leaveType: LeaveTypeRecord }) {
+export function EditLeaveTypeForm({
+  leaveType,
+  appReadonly = false,
+}: {
+  leaveType: LeaveTypeRecord;
+  appReadonly?: boolean;
+}) {
   const [state, action, pending] = useActionState(updateLeaveTypeAction, undefined);
   const [deleteState, deleteAction, deletePending] = useActionState(
     deleteLeaveTypeAction,
@@ -156,8 +162,8 @@ export function EditLeaveTypeForm({ leaveType }: { leaveType: LeaveTypeRecord })
         <input type="hidden" name="id" value={leaveType.id} />
         <LeaveTypeFields value={leaveType} lockIdentity={leaveType.inUse} />
         <div className="flex items-end">
-          <button className={buttonClass} type="submit" disabled={pending}>
-            Save
+          <button className={buttonClass} type="submit" disabled={pending || appReadonly}>
+            {appReadonly ? "Frozen" : "Save"}
           </button>
         </div>
       </form>
@@ -166,7 +172,7 @@ export function EditLeaveTypeForm({ leaveType }: { leaveType: LeaveTypeRecord })
         <button
           className="text-sm text-red-600 underline disabled:opacity-60"
           type="submit"
-          disabled={deletePending}
+          disabled={deletePending || appReadonly}
         >
           Delete
         </button>

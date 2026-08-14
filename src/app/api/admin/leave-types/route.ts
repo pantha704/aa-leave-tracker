@@ -11,6 +11,7 @@ import {
   parseLeaveTypeInput,
   type LeaveTypeInput,
   type LeaveTypeRecord,
+  type LeaveTypeWriteFail,
   type LeaveTypeWriteOptions,
 } from "@/server/leave-types";
 
@@ -20,7 +21,7 @@ export type AdminLeaveTypesDeps = AdminGateDeps & {
     orgId: string,
     input: LeaveTypeInput,
     options?: LeaveTypeWriteOptions,
-  ) => Promise<{ ok: true; leaveType: LeaveTypeRecord } | { ok: false; error: string; status: 409 }>;
+  ) => Promise<{ ok: true; leaveType: LeaveTypeRecord } | LeaveTypeWriteFail>;
 };
 
 const defaultDeps: AdminLeaveTypesDeps = {
@@ -64,7 +65,10 @@ export async function postAdminLeaveType(
     actorId: gate.context.actor.id,
   });
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+    return NextResponse.json(
+      { error: result.error, ...(result.code ? { code: result.code } : {}) },
+      { status: result.status },
+    );
   }
   return NextResponse.json({ leaveType: result.leaveType }, { status: 201 });
 }

@@ -3,7 +3,13 @@
 import { useActionState } from "react";
 import { reverseImportAction, type ReverseFormState } from "./actions";
 
-export function ReverseBatchForm({ batchId }: { batchId: string }) {
+export function ReverseBatchForm({
+  batchId,
+  appReadonly = false,
+}: {
+  batchId: string;
+  appReadonly?: boolean;
+}) {
   const [state, action, pending] = useActionState(reverseImportAction, undefined as ReverseFormState);
   return (
     <form
@@ -15,7 +21,11 @@ export function ReverseBatchForm({ batchId }: { batchId: string }) {
       }}
     >
       <input type="hidden" name="batchId" value={batchId} />
-      <button className="text-red-600 underline disabled:opacity-60" type="submit" disabled={pending}>
+      <button
+        className="text-red-600 underline disabled:opacity-60"
+        type="submit"
+        disabled={pending || appReadonly}
+      >
         Reverse
       </button>
       {state && !state.ok ? (

@@ -32,7 +32,7 @@ export default async function AdminPage() {
         <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-500">Operations</h2>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
           {settings.appReadonly
-            ? "App is frozen (readonly). Leave writes are blocked."
+            ? "App is frozen (readonly). Writes are blocked."
             : "Dual-run: sheet is still source of truth."}
         </p>
         <ReadonlyToggle appReadonly={settings.appReadonly} />

@@ -41,7 +41,10 @@ export async function postAdminAssignment(
     raw: body.value,
   });
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+    return NextResponse.json(
+      { error: result.error, ...(result.code ? { code: result.code } : {}) },
+      { status: result.status },
+    );
   }
   return NextResponse.json({ assignment: result.assignment }, { status: 201 });
 }

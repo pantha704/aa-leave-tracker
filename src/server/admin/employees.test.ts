@@ -288,6 +288,7 @@ describe("postAdjustment", () => {
     expect(result).toEqual({
       ok: false,
       status: 423,
+      code: "APP_READONLY",
       error: "The application is in read-only mode.",
     });
   });
@@ -319,5 +320,27 @@ describe("assignEmployeePolicy", () => {
       writeAudit: async () => undefined,
     });
     expect(result).toEqual({ ok: true, assignment });
+  });
+
+  it("returns 423 when the app is readonly", async () => {
+    const result = await assignEmployeePolicy({
+      actor: { id: "admin", role: "admin" },
+      orgId: "org-1",
+      employeeId: PERSON,
+      raw: { policyId: POLICY, validFrom: "2026-01-01" },
+      store: store({
+        isAppReadonly: async () => true,
+        upsertAssignment: async () => {
+          throw new Error("must not assign");
+        },
+      }),
+      writeAudit: async () => undefined,
+    });
+    expect(result).toEqual({
+      ok: false,
+      status: 423,
+      code: "APP_READONLY",
+      error: "The application is in read-only mode.",
+    });
   });
 });

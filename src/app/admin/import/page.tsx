@@ -1,11 +1,15 @@
 import { requireAdmin } from "@/server/auth";
 import { dbImportStore } from "@/server/import/commit";
+import { getOrgSettings } from "@/server/settings";
 import { LeaveImportForm } from "./import-form";
 import { ReverseBatchForm } from "./reverse-batch-form";
 
 export default async function AdminImportPage() {
   const { employee } = await requireAdmin();
-  const batches = await dbImportStore.listBatches(employee.orgId);
+  const [batches, settings] = await Promise.all([
+    dbImportStore.listBatches(employee.orgId),
+    getOrgSettings(employee.orgId),
+  ]);
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-6 py-10">
@@ -23,7 +27,7 @@ export default async function AdminImportPage() {
         </p>
       </header>
 
-      <LeaveImportForm />
+      <LeaveImportForm appReadonly={settings.appReadonly} />
 
       <section>
         <h2 className="text-lg font-medium">Import batches</h2>
@@ -53,7 +57,9 @@ export default async function AdminImportPage() {
                     <td className="py-2 pr-4">{batch.filename ?? ""}</td>
                     <td className="py-2 pr-4">{batch.reversedAt ? batch.reversedAt.toISOString() : ""}</td>
                     <td className="py-2">
-                      {batch.reversedAt ? null : <ReverseBatchForm batchId={batch.id} />}
+                      {batch.reversedAt ? null : (
+                        <ReverseBatchForm batchId={batch.id} appReadonly={settings.appReadonly} />
+                      )}
                     </td>
                   </tr>
                 ))

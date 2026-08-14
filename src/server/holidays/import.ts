@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { holidays } from "@/db/schema";
 import { tryWriteAudit, writeAuditEvent, type AuditWriter } from "../audit";
 import { getDb } from "../db";
+import { APP_READONLY_CODE, APP_READONLY_MESSAGE, isAppReadonly } from "../settings";
 import { isUniqueViolation } from "../pg-error";
 import {
   holidayCsvErrorsToCsv,
@@ -46,7 +47,8 @@ export function collectExistingHolidayConflicts(
 
 export type HolidayImportResult =
   | { ok: true; imported: number; updated: number; holidays: HolidayRecord[] }
-  | { ok: false; errors: HolidayCsvError[]; errorCsv: string };
+  | { ok: false; errors: HolidayCsvError[]; errorCsv: string }
+  | { ok: false; status: 423; code: typeof APP_READONLY_CODE; error: string };
 
 export type HolidayApplyResult =
   | { ok: true; imported: number; updated: number; holidays: HolidayRecord[] }
@@ -54,6 +56,7 @@ export type HolidayApplyResult =
 
 export type HolidayImportDeps = {
   apply: (orgId: string, rows: HolidayCsvRow[], mode: HolidayImportMode) => Promise<HolidayApplyResult>;
+  isAppReadonly?: (orgId: string) => Promise<boolean>;
 };
 
 export type HolidayImportOptions = {
@@ -72,6 +75,9 @@ export async function importHolidayCsv(
   deps: HolidayImportDeps,
   options: HolidayImportOptions = {},
 ): Promise<HolidayImportResult> {
+  if (await (deps.isAppReadonly ?? (async () => false))(orgId)) {
+    return { ok: false, status: 423, code: APP_READONLY_CODE, error: APP_READONLY_MESSAGE };
+  }
   const mode = options.mode ?? "insert";
   const parsed = parseHolidayCsv(csv);
   if (parsed.errors.length > 0) {
@@ -205,8 +211,15 @@ export async function applyHolidayRows(
 export async function deleteHoliday(
   orgId: string,
   id: string,
-  options: { actorId?: string | null; writeAudit?: AuditWriter } = {},
-): Promise<{ ok: true } | { ok: false; error: string; status: 404 }> {
+  options: {
+    actorId?: string | null;
+    writeAudit?: AuditWriter;
+    isAppReadonly?: (orgId: string) => Promise<boolean>;
+  } = {},
+): Promise<{ ok: true } | { ok: false; error: string; status: 404 | 423; code?: string }> {
+  if (await (options.isAppReadonly ?? isAppReadonly)(orgId)) {
+    return { ok: false, status: 423, code: APP_READONLY_CODE, error: APP_READONLY_MESSAGE };
+  }
   const deleted = await getDb()
     .delete(holidays)
     .where(and(eq(holidays.id, id), eq(holidays.orgId, orgId)))
@@ -226,4 +239,5 @@ export async function deleteHoliday(
 
 export const dbHolidayImportDeps: HolidayImportDeps = {
   apply: applyHolidayRows,
+  isAppReadonly,
 };

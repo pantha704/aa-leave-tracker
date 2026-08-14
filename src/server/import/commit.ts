@@ -76,7 +76,7 @@ export type CommitImportResult =
 
 export type ReverseImportResult =
   | { ok: true; batch: ImportBatchRecord; reversedLedger: number; cancelledEntries: number }
-  | { ok: false; error: string; status: 404 | 409 };
+  | { ok: false; error: string; status: 404 | 409 | 423; code?: string };
 
 export type ApplyCommitInput = {
   orgId: string;
@@ -159,6 +159,14 @@ export async function reverseImportBatch(
   store: ImportCommitStore,
   options: { writeAudit?: AuditWriter; now?: Date } = {},
 ): Promise<ReverseImportResult> {
+  if (await store.isAppReadonly(input.orgId)) {
+    return {
+      ok: false,
+      status: 423,
+      code: APP_READONLY_CODE,
+      error: APP_READONLY_MESSAGE,
+    };
+  }
   const result = await store.reverseBatch({
     orgId: input.orgId,
     batchId: input.batchId,

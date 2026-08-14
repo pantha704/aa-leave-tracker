@@ -190,6 +190,23 @@ describe("leave type delete protection", () => {
     expect(result).toEqual({ ok: true });
     expect(await store.getById("org-1", "lt-1")).toBeNull();
   });
+
+  it("returns 423 when the app is readonly", async () => {
+    const store = memoryStore([{ id: "lt-1", orgId: "org-1", ...sample }]);
+    const created = await createLeaveType("org-1", sample, {
+      store,
+      writeAudit: async () => {},
+      isAppReadonly: async () => true,
+    });
+    expect(created).toMatchObject({ ok: false, status: 423, code: "APP_READONLY" });
+    const deleted = await deleteLeaveType("org-1", "lt-1", {
+      store,
+      writeAudit: async () => {},
+      isAppReadonly: async () => true,
+    });
+    expect(deleted).toMatchObject({ ok: false, status: 423, code: "APP_READONLY" });
+    expect(await store.getById("org-1", "lt-1")).not.toBeNull();
+  });
 });
 
 describe("leave type identity lock and uniqueness", () => {

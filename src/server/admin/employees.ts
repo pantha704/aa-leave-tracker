@@ -23,7 +23,11 @@ import {
 } from "@/server/ledger/balance";
 import { postLedgerEntry, type LedgerRow, type PostLedgerInput } from "@/server/ledger/post";
 import { isInvalidDate, isInvalidText } from "@/server/pg-error";
-import { APP_READONLY_MESSAGE, isAppReadonly as orgIsAppReadonly } from "@/server/settings";
+import {
+  APP_READONLY_CODE,
+  APP_READONLY_MESSAGE,
+  isAppReadonly as orgIsAppReadonly,
+} from "@/server/settings";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -160,6 +164,7 @@ export type AdminFail = {
   ok: false;
   status: 400 | 401 | 403 | 404 | 409 | 423;
   error: string;
+  code?: string;
 };
 
 export function isUuid(value: string): boolean {
@@ -845,7 +850,7 @@ export async function postAdjustment(input: {
 
   const store = input.store ?? pgEmployeeStore();
   if (await store.isAppReadonly(input.orgId)) {
-    return { ok: false, status: 423, error: APP_READONLY_MESSAGE };
+    return { ok: false, status: 423, code: APP_READONLY_CODE, error: APP_READONLY_MESSAGE };
   }
   try {
     const employee = await store.getEmployee(input.orgId, input.employeeId);
@@ -909,6 +914,9 @@ export async function assignEmployeePolicy(input: {
   if (!parsed.ok) return { ok: false, status: 400, error: parsed.error };
 
   const store = input.store ?? pgEmployeeStore();
+  if (await store.isAppReadonly(input.orgId)) {
+    return { ok: false, status: 423, code: APP_READONLY_CODE, error: APP_READONLY_MESSAGE };
+  }
   try {
     const employee = await store.getEmployee(input.orgId, input.employeeId);
     if (!employee) return { ok: false, status: 404, error: "employee not found" };

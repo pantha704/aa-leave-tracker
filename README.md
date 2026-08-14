@@ -45,6 +45,7 @@ docker run --name aa-leave-postgres \
 | `bun start` | Serve the production build |
 | `bun run typecheck` | `next typegen && tsc --noEmit` |
 | `bun run test` | Vitest |
+| `bun run test:e2e` | Playwright e2e (`tests/e2e/`). In CI this skips unless `PLAYWRIGHT=1` |
 | `bun run db:generate` | Drizzle Kit generate |
 | `bun run db:migrate` | Apply Drizzle migrations |
 | `bun run db:seed` | Seed DEMO org (requires `SEED_TIMEZONE` and `SEED_ADMIN_PASSWORD`) |
@@ -64,5 +65,34 @@ Email + password via Better Auth. There is no public registration endpoint.
 - Admin roster at `/admin/employees` (search, remaining vacation hours, last entry). Employee file has balances, ledger, entries, policy assign, and required-reason hour adjustments. Approve/reject/cancel go through `decide.ts`. Every admin page shows a pending-request badge.
 - Session cookies are `httpOnly`, `SameSite=Lax`, and `Secure` when `NODE_ENV=production`.
 - In production set `BETTER_AUTH_URL` to an `https://` origin.
+- Login is throttled in-memory per client IP (10 attempts / 15 minutes) on `/login` and `/api/auth/sign-in/*`.
+- Responses set a `Content-Security-Policy` (see `next.config.ts`).
+
+## Backup
+
+`src/ops/backup.sh` runs `pg_dump` against `DATABASE_URL` (requires `pg_dump` on `PATH`).
+
+```bash
+./src/ops/backup.sh
+./src/ops/backup.sh /path/to/aa-leave.sql
+```
+
+## End-to-end tests
+
+Playwright specs live in `tests/e2e/` (employee log flow + import dry-run / remaining-hours diff). CI skips them unless `PLAYWRIGHT=1`.
+
+```bash
+bunx playwright install chromium
+bun run test:e2e
+# or
+bunx playwright test
+```
+
+Authenticated flows need a running app plus:
+
+- `E2E_EMPLOYEE_EMAIL` / `E2E_EMPLOYEE_PASSWORD` for `/me` log
+- `E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD` for `/admin/import` dry-run
+
+Without those env vars the specs still smoke `/login` and the unauthenticated redirect. Override the server with `PLAYWRIGHT_BASE_URL` if it is already running.
 
 Do not commit `.env`.

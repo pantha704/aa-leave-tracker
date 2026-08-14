@@ -11,6 +11,11 @@ import {
   type EmployeeRole,
 } from "@/server/auth";
 import { getDb } from "@/server/db";
+import {
+  clientIpFromHeaders,
+  consumeLoginAttempt,
+  resetLoginAttempts,
+} from "@/server/rate-limit";
 
 export type AuthFormState = { error: string } | undefined;
 
@@ -22,6 +27,12 @@ export async function signInAction(
   const password = String(formData.get("password") ?? "");
   if (!email || !password) {
     return { error: "Email and password are required" };
+  }
+
+  const ip = clientIpFromHeaders(await headers());
+  const limited = consumeLoginAttempt(ip);
+  if (!limited.ok) {
+    return { error: "Too many login attempts. Try again later." };
   }
 
   let user: { id: string; email: string };
@@ -44,9 +55,11 @@ export async function signInAction(
   }
 
   if (employee.mustChangePassword) {
+    resetLoginAttempts(ip);
     redirect("/login/change-password");
   }
 
+  resetLoginAttempts(ip);
   redirect(homeForRole(employee.role as EmployeeRole));
 }
 

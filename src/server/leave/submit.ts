@@ -420,7 +420,7 @@ export function gateOrgWrites(
   intent: Intent,
 ): LeaveFail | null {
   if (settings.appReadonly) {
-    return fail(403, "APP_READONLY", "The application is in read-only mode.");
+    return fail(423, "APP_READONLY", "The application is in read-only mode.");
   }
   if (intent === "log" && !settings.selfLogEnabled) {
     return fail(422, "SELF_LOG_DISABLED", "Self-logging is disabled.");

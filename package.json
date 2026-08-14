@@ -9,11 +9,10 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "bash scripts/e2e.sh",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "bun run src/db/seed.ts",
-    "job:accrual": "bun run src/jobs/accrual.ts"
+    "job:lock": "bun run src/jobs/lock.ts"
   },
   "dependencies": {
     "better-auth": "^1.6.28",
@@ -25,7 +24,6 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

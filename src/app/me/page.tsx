@@ -8,6 +8,11 @@ export default async function MePage() {
       <main className="text-center">
         <h1 className="text-3xl font-semibold tracking-tight">My leave</h1>
         <p className="mt-3 text-zinc-600 dark:text-zinc-400">Placeholder</p>
+        <p className="mt-6">
+          <a className="text-sm underline" href="/calendar">
+            Team calendar
+          </a>
+        </p>
       </main>
     </div>
   );

@@ -18,6 +18,9 @@ export default async function AdminPage() {
         <a className="underline" href="/admin/leave-types">
           Leave types
         </a>
+        <a className="underline" href="/calendar">
+          Team calendar
+        </a>
       </nav>
     </div>
   );

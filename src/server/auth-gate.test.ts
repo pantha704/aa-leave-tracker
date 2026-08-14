@@ -49,6 +49,27 @@ describe("auth gate", () => {
     expect(applyAuthGate(get("/me"), actor).status).toBe(200);
   });
 
+  it("unauthenticated GET /calendar is redirected to login", () => {
+    const res = applyAuthGate(get("/calendar"), { kind: "anonymous" });
+    expect([301, 302, 303, 307, 308]).toContain(res.status);
+    expect(res.headers.get("location")).toMatch(/\/login$/);
+  });
+
+  it("employee and admin can GET /calendar", () => {
+    const employee = {
+      kind: "authenticated" as const,
+      role: "employee" as const,
+      mustChangePassword: false,
+    };
+    const admin = {
+      kind: "authenticated" as const,
+      role: "admin" as const,
+      mustChangePassword: false,
+    };
+    expect(applyAuthGate(get("/calendar"), employee).status).toBe(200);
+    expect(applyAuthGate(get("/calendar"), admin).status).toBe(200);
+  });
+
   it("forces change-password before any other page", () => {
     const actor = {
       kind: "authenticated" as const,

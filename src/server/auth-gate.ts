@@ -34,6 +34,10 @@ export function isMePath(pathname: string): boolean {
   return pathname === "/me" || pathname.startsWith("/me/");
 }
 
+export function isCalendarPath(pathname: string): boolean {
+  return pathname === "/calendar" || pathname.startsWith("/calendar/");
+}
+
 function isHealthPath(pathname: string): boolean {
   return pathname === "/api/health" || pathname.startsWith("/api/health/");
 }
@@ -69,7 +73,8 @@ export function applyAuthGate(request: NextRequest, actor: Actor): NextResponse 
 
   const isLogin = pathname === "/login";
   const isChangePassword = pathname === "/login/change-password";
-  const needsAuth = isMePath(pathname) || isAdminPath(pathname) || isChangePassword;
+  const needsAuth =
+    isMePath(pathname) || isAdminPath(pathname) || isCalendarPath(pathname) || isChangePassword;
 
   if (actor.kind === "anonymous") {
     if (needsAuth) {

@@ -1,5 +1,6 @@
 export type LedgerRemainingInput = {
   id: string;
+  leaveTypeId: string;
   minutes: number;
   effectiveOn: string;
   periodYear: number;
@@ -32,10 +33,11 @@ export function withRunningRemaining<T extends LedgerRemainingInput>(
     });
 
   const remainingById = new Map<string, number>();
-  let running = 0;
+  const runningByType = new Map<string, number>();
   for (const row of oldestLive) {
-    running += row.minutes;
-    remainingById.set(row.id, running);
+    const next = (runningByType.get(row.leaveTypeId) ?? 0) + row.minutes;
+    runningByType.set(row.leaveTypeId, next);
+    remainingById.set(row.id, next);
   }
 
   return inYear

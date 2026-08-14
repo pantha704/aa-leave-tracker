@@ -7,6 +7,7 @@ describe("withRunningRemaining", () => {
       [
         {
           id: "usage",
+          leaveTypeId: "vacation",
           kind: "usage",
           minutes: -480,
           effectiveOn: "2026-07-06",
@@ -16,6 +17,7 @@ describe("withRunningRemaining", () => {
         },
         {
           id: "grant",
+          leaveTypeId: "vacation",
           kind: "accrual",
           minutes: 1360,
           effectiveOn: "2026-01-01",
@@ -25,6 +27,7 @@ describe("withRunningRemaining", () => {
         },
         {
           id: "next",
+          leaveTypeId: "vacation",
           kind: "accrual",
           minutes: 680,
           effectiveOn: "2027-01-01",
@@ -39,5 +42,36 @@ describe("withRunningRemaining", () => {
     expect(rows.map((row) => row.id)).toEqual(["usage", "grant"]);
     expect(rows[0]?.remainingMinutes).toBe(880);
     expect(rows[1]?.remainingMinutes).toBe(1360);
+  });
+
+  it("keeps a running remaining per leave type", () => {
+    const rows = withRunningRemaining(
+      [
+        {
+          id: "sick",
+          leaveTypeId: "sick",
+          kind: "grant_lump",
+          minutes: 1440,
+          effectiveOn: "2026-01-01",
+          periodYear: 2026,
+          reversedAt: null,
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+        {
+          id: "vacation",
+          leaveTypeId: "vacation",
+          kind: "accrual",
+          minutes: 680,
+          effectiveOn: "2026-01-01",
+          periodYear: 2026,
+          reversedAt: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      2026,
+    );
+
+    expect(rows.find((row) => row.id === "vacation")?.remainingMinutes).toBe(680);
+    expect(rows.find((row) => row.id === "sick")?.remainingMinutes).toBe(1440);
   });
 });

@@ -137,6 +137,17 @@ describe("parsePolicyInput dates and minutes", () => {
       ).ok,
     ).toBe(false);
   });
+
+  it("allows a negative floor when negative_allowed is true", () => {
+    const parsed = parsePolicyInput(
+      validPolicy({ negative_allowed: true, negative_floor_minutes: -240 }),
+    );
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.negative_allowed).toBe(true);
+      expect(parsed.value.negative_floor_minutes).toBe(-240);
+    }
+  });
 });
 
 function memoryPersist(): PolicyPersistence {

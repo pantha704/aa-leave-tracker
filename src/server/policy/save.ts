@@ -64,7 +64,7 @@ export const policySaveSchema = z.object({
   carryover_max_minutes: nullableMinutes.optional(),
   allow_forfeit: z.boolean().default(false),
   negative_allowed: z.boolean().default(false),
-  negative_floor_minutes: nullableMinutes.optional(),
+  negative_floor_minutes: z.number().int().nullable().optional(),
   waiting_period_days: z.number().int().nonnegative().default(0),
   approval_for_request: z.enum(APPROVAL_MODES).default("admin"),
   approval_for_log: z.enum(APPROVAL_MODES).default("none"),

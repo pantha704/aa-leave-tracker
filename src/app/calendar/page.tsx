@@ -3,8 +3,6 @@ import {
   defaultCalendarStore,
   isTeamCalendarOn,
   monthCells,
-  monthEnd,
-  monthStart,
   parseCalendarMonth,
   readTeamCalendar,
   shiftYearMonth,
@@ -39,17 +37,19 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
 
   const isAdmin = employee.role === "admin";
   const yearMonth = "error" in parsed ? null : parsed;
-  const from = yearMonth ? monthStart(yearMonth.year, yearMonth.month) : "2026-01-01";
-  const to = yearMonth ? monthEnd(yearMonth.year, yearMonth.month) : "2026-01-01";
+  const cells = yearMonth ? monthCells(yearMonth.year, yearMonth.month) : [];
+  const from = cells[0]?.date;
+  const to = cells[cells.length - 1]?.date;
 
-  const result = yearMonth
-    ? await readTeamCalendar({
-        actor: { id: employee.id, role: employee.role as EmployeeRole },
-        orgId: employee.orgId,
-        from,
-        to,
-      })
-    : null;
+  const result =
+    yearMonth && from && to
+      ? await readTeamCalendar({
+          actor: { id: employee.id, role: employee.role as EmployeeRole },
+          orgId: employee.orgId,
+          from,
+          to,
+        })
+      : null;
 
   const enabled = isTeamCalendarOn(result);
   const showType = enabled ? result.body.showType : false;
@@ -142,42 +142,40 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
                   {label}
                 </div>
               ))}
-              {yearMonth
-                ? monthCells(yearMonth.year, yearMonth.month).map((cell) => {
-                    const people = peopleByDate.get(cell.date) ?? [];
-                    return (
-                      <div
-                        key={cell.date}
-                        className={`min-h-24 bg-[var(--background)] px-2 py-2 ${
-                          cell.inMonth ? "" : "opacity-40"
-                        }`}
-                      >
-                        <div className="text-xs tabular-nums text-zinc-500">
-                          {cell.date.slice(8, 10)}
-                        </div>
-                        <ul className="mt-1 flex flex-col gap-1">
-                          {people.map((person) => {
-                            const half = portionLabel(person.portion);
-                            const type = showType ? person.leaveTypeName : null;
-                            return (
-                              <li
-                                key={`${person.employeeId}-${person.portion}-${type ?? "out"}`}
-                                className="text-xs leading-snug"
-                              >
-                                <span className="font-medium">{person.name}</span>
-                                <span className="text-zinc-600 dark:text-zinc-400">
-                                  {" "}
-                                  {type ?? "out"}
-                                  {half ? ` (${half})` : ""}
-                                </span>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </div>
-                    );
-                  })
-                : null}
+              {cells.map((cell) => {
+                const people = peopleByDate.get(cell.date) ?? [];
+                return (
+                  <div
+                    key={cell.date}
+                    className={`min-h-24 bg-[var(--background)] px-2 py-2 ${
+                      cell.inMonth ? "" : "opacity-40"
+                    }`}
+                  >
+                    <div className="text-xs tabular-nums text-zinc-500">
+                      {cell.date.slice(8, 10)}
+                    </div>
+                    <ul className="mt-1 flex flex-col gap-1">
+                      {people.map((person) => {
+                        const half = portionLabel(person.portion);
+                        const type = showType ? person.leaveTypeName : null;
+                        return (
+                          <li
+                            key={`${person.employeeId}-${person.portion}-${type ?? "out"}`}
+                            className="text-xs leading-snug"
+                          >
+                            <span className="font-medium">{person.name}</span>
+                            <span className="text-zinc-600 dark:text-zinc-400">
+                              {" "}
+                              {type ?? "out"}
+                              {half ? ` (${half})` : ""}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </>

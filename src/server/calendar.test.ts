@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   calendarPayloadHasPrivateFields,
@@ -8,6 +9,7 @@ import {
   readTeamCalendar,
   redactCalendarPerson,
   shiftYearMonth,
+  TEAM_CALENDAR_OUT_SELECT,
   updateTeamCalendarFlags,
   type CalendarPersonRaw,
   type CalendarStore,
@@ -81,23 +83,23 @@ describe("readTeamCalendar privacy", () => {
     });
 
     expect(employeeView).toEqual(adminView);
-    expect(employeeView).toMatchObject({
-      status: 200,
-      body: {
-        enabled: true,
-        showType: false,
-        people: [
-          {
-            employeeId: "bob",
-            name: "Bob",
-            onDate: "2026-08-12",
-            portion: "full",
-          },
-        ],
-      },
+    expect(employeeView.status).toBe(200);
+    expect(employeeView.body).toEqual({
+      enabled: true,
+      showType: false,
+      from: "2026-08-01",
+      to: "2026-08-31",
+      people: [
+        {
+          employeeId: "bob",
+          name: "Bob",
+          onDate: "2026-08-12",
+          portion: "full",
+        },
+      ],
     });
     expect(calendarPayloadHasPrivateFields(employeeView.body)).toBe(false);
-    expect(JSON.stringify(employeeView.body)).not.toMatch(/note|Sick|diagnosis/i);
+    expect(calendarPayloadHasPrivateFields({ people: [{ leaveTypeName: "Vacation" }] })).toBe(true);
   });
 
   it("includes leave type name only when team_calendar_show_type is true", async () => {
@@ -110,15 +112,26 @@ describe("readTeamCalendar privacy", () => {
         loadOrgContext: async () => ({ timezone: "UTC", showType: true, enabled: true }),
       }),
     });
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       status: 200,
       body: {
         enabled: true,
         showType: true,
-        people: [{ leaveTypeName: "Sick" }],
+        from: "2026-08-01",
+        to: "2026-08-31",
+        people: [
+          {
+            employeeId: "bob",
+            name: "Bob",
+            onDate: "2026-08-12",
+            portion: "full",
+            leaveTypeName: "Sick",
+          },
+        ],
       },
     });
-    expect(calendarPayloadHasPrivateFields(result.body)).toBe(false);
+    expect(calendarPayloadHasPrivateFields(result.body, { showType: true })).toBe(false);
+    expect(calendarPayloadHasPrivateFields(result.body)).toBe(true);
   });
 
   it("returns no people when the calendar is off — even if days exist", async () => {
@@ -149,6 +162,68 @@ describe("readTeamCalendar privacy", () => {
     ).resolves.toEqual({ ok: false, status: 401, error: "unauthenticated" });
   });
 
+  it("persists enabled true/false for an admin write", async () => {
+    const enabledWrites: boolean[] = [];
+    const audits: unknown[] = [];
+    const flags = {
+      upsertEnabled: async (_orgId: string, enabled: boolean) => {
+        enabledWrites.push(enabled);
+        return true;
+      },
+      updateShowType: async () => {
+        throw new Error("must not touch showType");
+      },
+    };
+
+    await expect(
+      updateTeamCalendarFlags({
+        actor: admin,
+        orgId: "org-1",
+        enabled: true,
+        flags,
+        writeAudit: async (event) => {
+          audits.push(event.after);
+        },
+      }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      updateTeamCalendarFlags({
+        actor: admin,
+        orgId: "org-1",
+        enabled: false,
+        flags,
+        writeAudit: async (event) => {
+          audits.push(event.after);
+        },
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(enabledWrites).toEqual([true, false]);
+    expect(audits).toEqual([
+      { enabled: true, showType: null },
+      { enabled: false, showType: null },
+    ]);
+  });
+
+  it("does not audit when the settings upsert writes zero rows", async () => {
+    const result = await updateTeamCalendarFlags({
+      actor: admin,
+      orgId: "org-1",
+      enabled: true,
+      flags: {
+        upsertEnabled: async () => false,
+        updateShowType: async () => true,
+      },
+      writeAudit: async () => {
+        throw new Error("must not audit a failed write");
+      },
+    });
+    expect(result).toEqual({
+      ok: false,
+      status: 404,
+      error: "could not update team calendar",
+    });
+  });
+
   it("returns 401 when anonymous", async () => {
     const result = await readTeamCalendar({
       actor: null,
@@ -172,6 +247,7 @@ describe("month helpers", () => {
     expect(cells).toHaveLength(42);
     expect(cells[0]).toEqual({ date: "2026-07-27", inMonth: false, weekday: 1 });
     expect(cells[5]).toEqual({ date: "2026-08-01", inMonth: true, weekday: 6 });
+    expect(cells[41]?.date).toBe("2026-09-06");
     expect(shiftYearMonth(2026, 1, -1)).toEqual({ year: 2025, month: 12 });
   });
 
@@ -190,5 +266,24 @@ describe("month helpers", () => {
     });
     const tooLong = parseCalendarRange("2026-01-01", "2026-05-01");
     expect("error" in tooLong && tooLong.error).toMatch(/93 days/);
+    expect(parseCalendarRange("2026-02-31", "2026-03-01")).toEqual({
+      error: "from and to must be YYYY-MM-DD",
+    });
+  });
+});
+
+describe("default store SQL contract", () => {
+  it("never selects notes and filters to approved visible types", () => {
+    expect(Object.keys(TEAM_CALENDAR_OUT_SELECT).sort()).toEqual(
+      ["employeeId", "leaveTypeCode", "leaveTypeName", "name", "onDate", "portion"].sort(),
+    );
+    expect(Object.keys(TEAM_CALENDAR_OUT_SELECT)).not.toContain("note");
+    expect(Object.keys(TEAM_CALENDAR_OUT_SELECT)).not.toContain("adminNote");
+
+    const src = readFileSync(new URL("./calendar.ts", import.meta.url), "utf8");
+    expect(src).not.toMatch(/leaveEntries\.note|leaveEntries\.adminNote/);
+    expect(src).toMatch(/eq\(leaveEntries\.status, "approved"\)/);
+    expect(src).toMatch(/eq\(leaveDays\.slotActive, true\)/);
+    expect(src).toMatch(/eq\(leaveTypes\.visibleOnTeamCalendar, true\)/);
   });
 });

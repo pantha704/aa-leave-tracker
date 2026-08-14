@@ -10,7 +10,7 @@ import {
 import { tryWriteAudit, writeAuditEvent, type AuditWriter } from "./audit";
 import { canAdmin, type AuthzActor } from "./authz";
 import { getDb } from "./db";
-import { addIsoDays, asOfDateString, requireIsoDate } from "./ledger/balance";
+import { addIsoDays, asOfDateString } from "./ledger/balance";
 import { isoWeekday } from "./policy/days";
 
 const ISO_DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -74,6 +74,28 @@ export function isTeamCalendarOn(
 
 const PRIVATE_KEYS = new Set(["note", "adminNote", "admin_note", "leaveTypeCode", "leaveTypeId"]);
 
+export function calendarPayloadHasPrivateFields(
+  value: unknown,
+  options: { showType?: boolean } = {},
+): boolean {
+  const blocked = new Set(PRIVATE_KEYS);
+  if (!options.showType) blocked.add("leaveTypeName");
+  return hasBlockedKeys(value, blocked);
+}
+
+function hasBlockedKeys(value: unknown, blocked: Set<string>): boolean {
+  if (Array.isArray(value)) {
+    return value.some((child) => hasBlockedKeys(child, blocked));
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).some(([key, child]) => {
+      if (blocked.has(key)) return true;
+      return hasBlockedKeys(child, blocked);
+    });
+  }
+  return false;
+}
+
 export function redactCalendarPerson(raw: CalendarPersonRaw, showType: boolean): CalendarPerson {
   const person: CalendarPerson = {
     employeeId: raw.employeeId,
@@ -85,19 +107,6 @@ export function redactCalendarPerson(raw: CalendarPersonRaw, showType: boolean):
     person.leaveTypeName = raw.leaveTypeName;
   }
   return person;
-}
-
-export function calendarPayloadHasPrivateFields(value: unknown): boolean {
-  if (Array.isArray(value)) {
-    return value.some(calendarPayloadHasPrivateFields);
-  }
-  if (value && typeof value === "object") {
-    return Object.entries(value as Record<string, unknown>).some(([key, child]) => {
-      if (PRIVATE_KEYS.has(key)) return true;
-      return calendarPayloadHasPrivateFields(child);
-    });
-  }
-  return false;
 }
 
 export function monthStart(year: number, month: number): string {
@@ -142,6 +151,12 @@ export function parseCalendarMonth(
   return { year, month };
 }
 
+function requireCivilIsoDate(value: string): string | null {
+  if (!ISO_DATE.test(value)) return null;
+  const normalized = addIsoDays(value, 0);
+  return normalized === value ? value : null;
+}
+
 export function parseCalendarRange(
   fromRaw: string | undefined,
   toRaw: string | undefined,
@@ -149,11 +164,11 @@ export function parseCalendarRange(
   if (!fromRaw || !toRaw) {
     return { error: "from and to are required (YYYY-MM-DD)" };
   }
-  if (!ISO_DATE.test(fromRaw) || !ISO_DATE.test(toRaw)) {
+  const from = requireCivilIsoDate(fromRaw);
+  const to = requireCivilIsoDate(toRaw);
+  if (!from || !to) {
     return { error: "from and to must be YYYY-MM-DD" };
   }
-  const from = requireIsoDate(fromRaw, "from");
-  const to = requireIsoDate(toRaw, "to");
   if (to < from) {
     return { error: "to must be on or after from" };
   }
@@ -191,6 +206,16 @@ export function monthCells(year: number, month: number): MonthCell[] {
   return cells;
 }
 
+/** Columns the calendar query may return. Notes are never selected. */
+export const TEAM_CALENDAR_OUT_SELECT = {
+  employeeId: employees.id,
+  name: employees.name,
+  onDate: leaveDays.onDate,
+  portion: leaveDays.portion,
+  leaveTypeName: leaveTypes.name,
+  leaveTypeCode: leaveTypes.code,
+} as const;
+
 export const defaultCalendarStore: CalendarStore = {
   async loadOrgContext(orgId) {
     const [row] = await getDb()
@@ -212,14 +237,7 @@ export const defaultCalendarStore: CalendarStore = {
   },
   async loadOutDays(orgId, from, to) {
     return getDb()
-      .select({
-        employeeId: employees.id,
-        name: employees.name,
-        onDate: leaveDays.onDate,
-        portion: leaveDays.portion,
-        leaveTypeName: leaveTypes.name,
-        leaveTypeCode: leaveTypes.code,
-      })
+      .select(TEAM_CALENDAR_OUT_SELECT)
       .from(leaveDays)
       .innerJoin(leaveEntries, eq(leaveDays.leaveEntryId, leaveEntries.id))
       .innerJoin(employees, eq(leaveDays.employeeId, employees.id))
@@ -276,14 +294,47 @@ export async function readTeamCalendar(input: {
   };
 }
 
+export type CalendarFlagWriter = {
+  upsertEnabled: (orgId: string, enabled: boolean) => Promise<boolean>;
+  updateShowType: (orgId: string, showType: boolean) => Promise<boolean>;
+};
+
+export const defaultCalendarFlagWriter: CalendarFlagWriter = {
+  async upsertEnabled(orgId, enabled) {
+    try {
+      const [row] = await getDb()
+        .insert(orgSettings)
+        .values({ orgId, teamCalendarEnabled: enabled })
+        .onConflictDoUpdate({
+          target: orgSettings.orgId,
+          set: { teamCalendarEnabled: enabled },
+        })
+        .returning({ orgId: orgSettings.orgId });
+      return row != null;
+    } catch {
+      return false;
+    }
+  },
+  async updateShowType(orgId, showType) {
+    const [row] = await getDb()
+      .update(organizations)
+      .set({ teamCalendarShowType: showType })
+      .where(eq(organizations.id, orgId))
+      .returning({ id: organizations.id });
+    return row != null;
+  },
+};
+
 export async function updateTeamCalendarFlags(input: {
   actor: AuthzActor | null;
   orgId: string;
   enabled?: boolean;
   showType?: boolean;
   writeAudit?: AuditWriter;
-}): Promise<{ ok: true } | { ok: false; status: 401 | 403; error: string }> {
+  flags?: CalendarFlagWriter;
+}): Promise<{ ok: true } | { ok: false; status: 401 | 403 | 404; error: string }> {
   const { actor, orgId } = input;
+  const flags = input.flags ?? defaultCalendarFlagWriter;
   if (!actor) {
     return { ok: false, status: 401, error: "unauthenticated" };
   }
@@ -292,16 +343,16 @@ export async function updateTeamCalendarFlags(input: {
   }
 
   if (input.enabled != null) {
-    await getDb()
-      .update(orgSettings)
-      .set({ teamCalendarEnabled: input.enabled })
-      .where(eq(orgSettings.orgId, orgId));
+    const wrote = await flags.upsertEnabled(orgId, input.enabled);
+    if (!wrote) {
+      return { ok: false, status: 404, error: "could not update team calendar" };
+    }
   }
   if (input.showType != null) {
-    await getDb()
-      .update(organizations)
-      .set({ teamCalendarShowType: input.showType })
-      .where(eq(organizations.id, orgId));
+    const wrote = await flags.updateShowType(orgId, input.showType);
+    if (!wrote) {
+      return { ok: false, status: 404, error: "could not update team calendar" };
+    }
   }
 
   await tryWriteAudit(input.writeAudit ?? writeAuditEvent, {

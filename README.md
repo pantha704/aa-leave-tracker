@@ -59,6 +59,7 @@ Email + password via Better Auth. There is no public registration endpoint.
 - After login: admin → `/admin`, employee → `/me`.
 - Employees who `GET /admin` (including `/admin/holidays` and `/admin/leave-types`) receive **403** (not 404) from both the proxy and `authorizeAdmin` / `requireAdmin`.
 - Holidays start empty; import CSV (`date`, `name`, optional `region`). Unique per `(org, date, region)`. No holiday seed.
+- Sheet cutover at `/admin/import`: map columns (headers are not assumed), dry-run, commit a reversible `import_batches` row. Opening remaining is `adjustment` only (`reason = import: opening remaining`), never `grant_lump`. Historical rows land `approved` with `immutable_at`. Dry-run hard-fails a Sick first-year double-grant and returns an error CSV plus sheet-vs-app remaining diff.
 - Leave types are admin CRUD (`code`, `name`, `consumes_balance`, `legal_unit` hours|days, min increment, color). Types with entries or related FK rows cannot be deleted.
 - Admin roster at `/admin/employees` (search, remaining vacation hours, last entry). Employee file has balances, ledger, entries, policy assign, and required-reason hour adjustments. Approve/reject/cancel go through `decide.ts`. Every admin page shows a pending-request badge.
 - Session cookies are `httpOnly`, `SameSite=Lax`, and `Secure` when `NODE_ENV=production`.

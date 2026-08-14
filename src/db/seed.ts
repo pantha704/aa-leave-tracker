@@ -187,15 +187,25 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
         mustChangePassword: true,
       });
 
-      await tx.insert(policyPeriods).values({
-        orgId: org.id,
-        year,
-        status: "open",
-      });
+      await tx.insert(policyPeriods).values([
+        {
+          orgId: org.id,
+          year,
+          status: "open",
+        },
+        {
+          orgId: org.id,
+          year: year + 1,
+          status: "future",
+        },
+      ]);
     });
 
     console.log(`DEMO standard_workday_minutes=${DEMO_WORKDAY_MINUTES} (8.00h)`);
-    console.log(`Seeded org "${DEMO_ORG_NAME}" timezone=${timezone} year=${year} (open)`);
+    console.log(
+      `Seeded org "${DEMO_ORG_NAME}" timezone=${timezone} year=${year} (open) year=${year + 1} (future)`,
+    );
+    console.log("Assign policies, then first-year open the same year to grant Sick.");
     console.log(`Seeded admin ${adminEmail} (must change password on first login)`);
     console.log("No holiday rows seeded.");
   } finally {

@@ -12,7 +12,8 @@
     "test:e2e": "bash scripts/e2e.sh",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:seed": "bun run src/db/seed.ts"
+    "db:seed": "bun run src/db/seed.ts",
+    "job:accrual": "bun run src/jobs/accrual.ts"
   },
   "dependencies": {
     "better-auth": "^1.6.28",

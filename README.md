@@ -61,7 +61,7 @@ Email + password via Better Auth. There is no public registration endpoint.
 - Holidays start empty; import CSV (`date`, `name`, optional `region`). Unique per `(org, date, region)`. No holiday seed.
 - Leave types are admin CRUD (`code`, `name`, `consumes_balance`, `legal_unit` hours|days, min increment, color). Types with entries or related FK rows cannot be deleted.
 - Admin roster at `/admin/employees` (search, remaining vacation hours, last entry). Employee file has balances, ledger, entries, policy assign, and required-reason hour adjustments. Approve/reject/cancel go through `decide.ts`. Every admin page shows a pending-request badge.
-- Admin CSV export at `/admin/export` (`GET /api/admin/export/:kind.csv` for `balances`, `entries`, `ledger`, `termination`). Each download is audited. Termination CSV always has `ledger_remaining` and `pro_rata_earned_to_end_date`.
+- Admin CSV export at `/admin/export` (`GET /api/admin/export/:kind.csv` for `balances`, `entries`, `ledger`, `termination`). Each download is audited. Termination CSV always has `ledger_remaining` and `pro_rata_earned_to_end_date`. Lump-sum working days skip org-global holidays (`region` null) only.
 - Session cookies are `httpOnly`, `SameSite=Lax`, and `Secure` when `NODE_ENV=production`.
 - In production set `BETTER_AUTH_URL` to an `https://` origin.
 

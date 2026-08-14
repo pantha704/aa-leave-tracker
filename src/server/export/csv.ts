@@ -2,16 +2,26 @@ export function minutesToHours(minutes: number): string {
   return (minutes / 60).toFixed(2);
 }
 
-export function csvEscape(value: string): string {
-  if (/[",\n\r]/.test(value)) {
-    return `"${value.replaceAll('"', '""')}"`;
+/** Neutralize Excel/Sheets formula injection on text cells (`=`, `+`, `-`, `@`, tab, CR). */
+export function neutralizeCsvFormula(value: string): string {
+  if (/^[=+\-@\t\r]/.test(value)) {
+    return `'${value}`;
   }
   return value;
 }
 
+export function csvEscape(value: string): string {
+  const cell = neutralizeCsvFormula(value);
+  if (/[",\n\r]/.test(cell) || cell !== value) {
+    return `"${cell.replaceAll('"', '""')}"`;
+  }
+  return cell;
+}
+
 export function csvCell(value: string | number | null | undefined): string {
   if (value == null) return "";
-  return csvEscape(String(value));
+  if (typeof value === "number") return String(value);
+  return csvEscape(value);
 }
 
 export function toCsv(

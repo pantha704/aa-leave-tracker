@@ -20,9 +20,10 @@ import {
 } from "@/server/ledger/balance";
 import { getDb } from "@/server/db";
 import { minutesToHours, toCsv } from "./csv";
-import { exportFilename, type ExportKind } from "./kinds";
+import { exportFilename, terminationFilename, type ExportKind } from "./kinds";
 import {
   computeTerminationMinutes,
+  orgGlobalHolidayDates,
   terminationRowsToCsv,
   type TerminationGrantMode,
 } from "./termination";
@@ -87,7 +88,7 @@ export type ExportSnapshot = {
   employees: ExportEmployee[];
   leaveTypes: ExportLeaveType[];
   policies: ExportPolicyRow[];
-  holidays: { onDate: string }[];
+  holidays: { onDate: string; region: string | null }[];
   ledger: ExportLedgerRow[];
   entries: ExportEntryRow[];
 };
@@ -179,7 +180,7 @@ export function pgExportStore(db: ReturnType<typeof getDb> = getDb()): ExportSto
           .innerJoin(employees, eq(employees.id, policyAssignments.employeeId))
           .where(eq(employees.orgId, orgId)),
         db
-          .select({ onDate: holidays.onDate })
+          .select({ onDate: holidays.onDate, region: holidays.region })
           .from(holidays)
           .where(eq(holidays.orgId, orgId)),
         db
@@ -287,9 +288,16 @@ export function balancesToCsv(
         (row) => row.employeeId === person.id && row.leaveTypeId === type.id,
       );
       const pending = pendingByKey.get(`${person.id}:${type.code}`) ?? [];
-      const balance = computeBalance({
+      const asOfLedger = ledger.filter((row) => row.effectiveOn <= asOf);
+      const split = computeBalance({
         rows: ledger,
         pendingEntries: pending,
+        asOf,
+        timeZone: snapshot.org.timezone,
+      });
+      const cut = computeBalance({
+        rows: asOfLedger,
+        pendingEntries: [],
         asOf,
         timeZone: snapshot.org.timezone,
       });
@@ -298,12 +306,12 @@ export function balancesToCsv(
         person.name,
         type.code,
         asOf,
-        minutesToHours(balance.grantedMinutes),
-        minutesToHours(balance.takenMinutes),
-        minutesToHours(balance.scheduledMinutes),
-        minutesToHours(balance.requestedMinutes),
-        minutesToHours(balance.remainingMinutes),
-        minutesToHours(balance.availableMinutes),
+        minutesToHours(cut.grantedMinutes),
+        minutesToHours(split.takenMinutes),
+        minutesToHours(split.scheduledMinutes),
+        minutesToHours(split.requestedMinutes),
+        minutesToHours(cut.remainingMinutes),
+        minutesToHours(cut.remainingMinutes - split.requestedMinutes),
       ]);
     }
   }
@@ -360,7 +368,7 @@ export function buildTerminationCsv(
   endDateByEmployee: (person: ExportEmployee) => string,
 ): string {
   const types = snapshot.leaveTypes.filter((type) => type.consumesBalance && !type.unlimited);
-  const holidaySet = new Set(snapshot.holidays.map((row) => row.onDate));
+  const holidaySet = orgGlobalHolidayDates(snapshot.holidays);
   const weekendDays = snapshot.org.weekendDays?.length ? snapshot.org.weekendDays : [6, 7];
   const rows = [];
   for (const person of people) {
@@ -420,27 +428,33 @@ export async function buildExport(input: BuildExportInput): Promise<BuildExportR
   const asOf = asOfDateString(asOfRaw ?? input.now ?? new Date(), snapshot.org.timezone);
 
   let csv: string;
+  let filename: string;
   if (input.kind === "balances") {
     csv = balancesToCsv(snapshot, people, asOf);
+    filename = exportFilename("balances", asOf);
   } else if (input.kind === "entries") {
     const entries = input.employeeId
       ? snapshot.entries.filter((row) => row.employeeId === input.employeeId)
       : snapshot.entries;
     csv = entriesToCsv(entries);
+    filename = exportFilename("entries", asOf);
   } else if (input.kind === "ledger") {
     const ledger = input.employeeId
       ? snapshot.ledger.filter((row) => row.employeeId === input.employeeId)
       : snapshot.ledger;
     csv = ledgerToCsv(ledger);
+    filename = exportFilename("ledger", asOf);
   } else {
-    csv = buildTerminationCsv(snapshot, people, (person) => endDateRaw ?? person.endDate ?? asOf);
+    const endDateFor = (person: ExportEmployee) => endDateRaw ?? person.endDate ?? asOf;
+    csv = buildTerminationCsv(snapshot, people, endDateFor);
+    filename = terminationFilename(people.map(endDateFor));
   }
 
   const rowCount = Math.max(csv.trimEnd().split("\n").length - 1, 0);
   return {
     ok: true,
     csv,
-    filename: exportFilename(input.kind, input.kind === "termination" ? (endDateRaw ?? asOf) : asOf),
+    filename,
     rowCount,
     kind: input.kind,
   };

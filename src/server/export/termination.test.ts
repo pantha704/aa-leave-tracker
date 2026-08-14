@@ -6,6 +6,7 @@ import {
   TERMINATION_HOUR_COLUMNS,
   computeTerminationMinutes,
   countWorkingDays,
+  orgGlobalHolidayDates,
   terminationCsvHeader,
   terminationRowsToCsv,
 } from "./termination";
@@ -88,6 +89,22 @@ describe("computeTerminationMinutes", () => {
     expect(result.proRataEarnedToEndDateMinutes).not.toBe(result.ledgerRemainingMinutes);
   });
 
+  it("keeps a prior-year live accrual when endDate is Jan 2 before close", () => {
+    const result = computeTerminationMinutes({
+      grantMode: "periodic",
+      grantMinutes: null,
+      rows: [
+        { kind: "accrual", minutes: 680, effectiveOn: "2026-12-01", periodYear: 2026, reversedAt: null },
+      ],
+      endDate: "2027-01-02",
+      periodYear: 2027,
+      periodStart: "2027-01-01",
+      periodEnd: "2027-12-31",
+    });
+    expect(result.ledgerRemainingMinutes).toBe(680);
+    expect(result.proRataEarnedToEndDateMinutes).toBe(680);
+  });
+
   it("for accrual types is live accrual+carryover+adjustment minus taken through endDate", () => {
     const result = computeTerminationMinutes({
       ...period,
@@ -104,5 +121,26 @@ describe("computeTerminationMinutes", () => {
     });
     expect(result.ledgerRemainingMinutes).toBe(680 + 680 + 60 - 480);
     expect(result.proRataEarnedToEndDateMinutes).toBe(680 + 680 + 60 - 480);
+  });
+});
+
+describe("org-global holidays for working days", () => {
+  it("ignores regional holidays and only skips region-null dates", () => {
+    const weekendDays = [6, 7] as const;
+    const startDate = "2026-01-01";
+    const endDate = "2026-12-31";
+    const base = countWorkingDays({ startDate, endDate, weekendDays });
+    const holidays = orgGlobalHolidayDates([
+      { onDate: "2026-05-01", region: "IN" },
+      { onDate: "2026-08-31", region: "UK" },
+      { onDate: "2026-12-25", region: null },
+    ]);
+    expect(holidays.has("2026-05-01")).toBe(false);
+    expect(holidays.has("2026-08-31")).toBe(false);
+    expect(holidays.has("2026-12-25")).toBe(true);
+    expect(
+      countWorkingDays({ startDate, endDate, weekendDays, holidays: new Set(["2026-05-01", "2026-08-31"]) }),
+    ).toBe(base - 2);
+    expect(countWorkingDays({ startDate, endDate, weekendDays, holidays })).toBe(base - 1);
   });
 });

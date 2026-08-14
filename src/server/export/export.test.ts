@@ -87,6 +87,33 @@ describe("export CSV builders", () => {
     expect(csvHeaderColumns(csv)).toContain("remaining_hours");
   });
 
+  it("balances asOf excludes later grants from granted and remaining", () => {
+    const withJuly: ExportSnapshot = {
+      ...snapshot,
+      ledger: [
+        ...snapshot.ledger,
+        {
+          ...snapshot.ledger[0],
+          kind: "accrual",
+          minutes: 680,
+          effectiveOn: "2026-07-01",
+        },
+      ],
+    };
+    const june = balancesToCsv(withJuly, withJuly.employees, "2026-06-15");
+    const july = balancesToCsv(withJuly, withJuly.employees, "2026-07-01");
+    expect(june).toContain("11.33,0.00,0.00,0.00,11.33,11.33");
+    expect(july).toContain("22.67,0.00,0.00,0.00,22.67,22.67");
+  });
+
+  it("prefixes a formula note so Excel will not execute it", () => {
+    const csv = entriesToCsv([
+      { ...snapshot.entries[0], note: '=HYPERLINK("http://evil.example","x")' },
+    ]);
+    expect(csv).toContain(`"'=HYPERLINK(""http://evil.example"",""x"")"`);
+    expect(csv.split("\n")[1]).not.toMatch(/(^|,)=HYPERLINK/);
+  });
+
   it("ledger includes minutes and hours", () => {
     const csv = ledgerToCsv(snapshot.ledger);
     expect(csv).toContain("accrual,680,11.33,2026-01-01,2026");
@@ -121,5 +148,29 @@ describe("buildExport", () => {
     expect(header).toEqual(expect.arrayContaining([...TERMINATION_HOUR_COLUMNS]));
     expect(result.filename).toBe("termination-2026-06-30.csv");
     expect(result.rowCount).toBe(1);
+  });
+
+  it("names a mixed-end-date termination file termination-mixed.csv", async () => {
+    const mixed: ExportSnapshot = {
+      ...snapshot,
+      employees: [
+        snapshot.employees[0],
+        {
+          id: "22222222-2222-4222-8222-222222222222",
+          email: "bob@example.com",
+          name: "Bob",
+          startDate: "2026-01-01",
+          endDate: "2026-03-15",
+        },
+      ],
+    };
+    const result = await buildExport({
+      orgId: "org",
+      kind: "termination",
+      store: { loadSnapshot: async () => mixed },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.filename).toBe("termination-mixed.csv");
   });
 });

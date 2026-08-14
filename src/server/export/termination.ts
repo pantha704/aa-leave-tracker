@@ -47,6 +47,13 @@ export function countWorkingDays(input: {
   return count;
 }
 
+/** Org-global holiday dates only. Regional rows stay out until per-employee location exists. */
+export function orgGlobalHolidayDates(
+  rows: readonly { onDate: string; region?: string | null }[],
+): Set<string> {
+  return new Set(rows.filter((row) => row.region == null).map((row) => row.onDate));
+}
+
 export function computeTerminationMinutes(input: {
   grantMode: TerminationGrantMode;
   grantMinutes: number | null;
@@ -59,16 +66,16 @@ export function computeTerminationMinutes(input: {
   weekendDays?: readonly number[];
   holidays?: ReadonlySet<string>;
 }): { ledgerRemainingMinutes: number; proRataEarnedToEndDateMinutes: number } {
-  const live = input.rows.filter(
-    (row) => isLiveLedgerRow(row) && row.periodYear === input.periodYear && row.effectiveOn <= input.endDate,
-  );
+  const live = input.rows.filter((row) => isLiveLedgerRow(row) && row.effectiveOn <= input.endDate);
   const ledgerRemainingMinutes = live.reduce((sum, row) => sum + row.minutes, 0);
 
   const takenMinutes = live
     .filter((row) => row.kind === "usage")
     .reduce((sum, row) => sum + -row.minutes, 0);
+  const takenInPeriod = live
+    .filter((row) => row.kind === "usage" && row.periodYear === input.periodYear)
+    .reduce((sum, row) => sum + -row.minutes, 0);
 
-  let earnedMinutes: number;
   if (input.grantMode === "lump_sum") {
     const allotment = input.grantMinutes ?? 0;
     const throughStart =
@@ -87,13 +94,17 @@ export function computeTerminationMinutes(input: {
       weekendDays: input.weekendDays,
       holidays: input.holidays,
     });
-    earnedMinutes =
+    const earnedMinutes =
       workingInPeriod === 0 ? 0 : Math.round((allotment * workingThroughEnd) / workingInPeriod);
-  } else {
-    earnedMinutes = live
-      .filter((row) => row.kind === "accrual" || row.kind === "carryover" || row.kind === "adjustment")
-      .reduce((sum, row) => sum + row.minutes, 0);
+    return {
+      ledgerRemainingMinutes,
+      proRataEarnedToEndDateMinutes: earnedMinutes - takenInPeriod,
+    };
   }
+
+  const earnedMinutes = live
+    .filter((row) => row.kind === "accrual" || row.kind === "carryover" || row.kind === "adjustment")
+    .reduce((sum, row) => sum + row.minutes, 0);
 
   return {
     ledgerRemainingMinutes,

@@ -7,7 +7,8 @@ import {
   DEMO_VACATION_TAKE_CEILING_MINUTES,
   DEMO_WORKDAY_MINUTES,
 } from "./demo-policy";
-import { requireSeedTimezone } from "./seed";
+import { readFileSync } from "node:fs";
+import { normalizeSeedAdminEmail, requireSeedAdminPassword, requireSeedTimezone } from "./seed";
 import {
   auditEvents,
   blackoutDates,
@@ -119,5 +120,36 @@ describe("normative schema", () => {
     expect(() => requireSeedTimezone({})).toThrow(/SEED_TIMEZONE is required/);
     expect(() => requireSeedTimezone({ SEED_TIMEZONE: "   " })).toThrow(/SEED_TIMEZONE is required/);
     expect(requireSeedTimezone({ SEED_TIMEZONE: "UTC" })).toBe("UTC");
+  });
+
+  it("requires SEED_ADMIN_PASSWORD for the admin credential", () => {
+    expect(() => requireSeedAdminPassword({})).toThrow(/SEED_ADMIN_PASSWORD is required/);
+    expect(() => requireSeedAdminPassword({ SEED_ADMIN_PASSWORD: "" })).toThrow(
+      /SEED_ADMIN_PASSWORD is required/,
+    );
+    expect(() => requireSeedAdminPassword({ SEED_ADMIN_PASSWORD: "short" })).toThrow(
+      /at least 8 characters/,
+    );
+    expect(requireSeedAdminPassword({ SEED_ADMIN_PASSWORD: "long-enough" })).toBe("long-enough");
+  });
+
+  it("stores seed admin email in lowercase", () => {
+    expect(normalizeSeedAdminEmail("Admin@AbsoluteAddiction.local", "x@y.z")).toBe(
+      "admin@absoluteaddiction.local",
+    );
+    expect(normalizeSeedAdminEmail("  a@b.C  ", "x@y.z")).toBe("a@b.c");
+    expect(normalizeSeedAdminEmail(undefined, "Admin@X.local")).toBe("admin@x.local");
+  });
+
+  it("does not seed holiday rows", () => {
+    const src = readFileSync(new URL("./seed.ts", import.meta.url), "utf8");
+    expect(src).not.toMatch(/insert\(holidays\)/);
+    expect(src).toMatch(/No holiday rows seeded/);
+  });
+
+  it("adds must_change_password and auth_user_id on employees", () => {
+    const cols = getTableColumns(employees);
+    expect(cols.mustChangePassword.name).toBe("must_change_password");
+    expect(cols.authUserId.name).toBe("auth_user_id");
   });
 });

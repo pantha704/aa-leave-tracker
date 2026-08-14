@@ -1,4 +1,8 @@
-export default function Home() {
+import { requireNotMustChangePassword } from "@/server/auth";
+
+export default async function Home() {
+  await requireNotMustChangePassword();
+
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6">
       <main className="text-center">
@@ -7,6 +11,11 @@ export default function Home() {
         </h1>
         <p className="mt-3 text-zinc-600 dark:text-zinc-400">
           Internal leave tracker
+        </p>
+        <p className="mt-6">
+          <a className="text-sm underline" href="/login">
+            Sign in
+          </a>
         </p>
       </main>
     </div>

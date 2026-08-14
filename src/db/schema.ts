@@ -16,6 +16,9 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { user } from "./auth-schema";
+
+export * from "./auth-schema";
 
 // weekend_days: ISO 8601 (1=Mon … 7=Sun). Default Sat+Sun = {6,7}.
 
@@ -78,9 +81,12 @@ export const employees = pgTable(
     employmentType: text("employment_type").notNull().default("full_time"),
     workdayMinutes: integer("workday_minutes"),
     active: boolean("active").notNull().default(true),
+    authUserId: text("auth_user_id").references(() => user.id),
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
   },
   (t) => [
     unique("employees_org_id_email_unique").on(t.orgId, t.email),
+    uniqueIndex("employees_auth_user_id_unique").on(t.authUserId),
     check("employees_role_check", sql`${t.role} IN ('employee','manager','admin')`),
   ],
 );

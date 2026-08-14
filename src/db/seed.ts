@@ -18,6 +18,8 @@ import {
   DEMO_VACATION_TYPE_NAME,
   DEMO_WORKDAY_MINUTES,
 } from "./demo-policy";
+import { hashPassword } from "better-auth/crypto";
+import { account, user } from "./auth-schema";
 import { employees, leaveTypes, organizations, orgSettings, policies, policyPeriods } from "./schema";
 import { getDatabaseUrl } from "../server/db";
 
@@ -31,6 +33,22 @@ export function requireSeedTimezone(env: SeedEnv = process.env): string {
     );
   }
   return timezone;
+}
+
+export function normalizeSeedAdminEmail(raw: string | undefined, fallback: string): string {
+  const email = (raw?.trim() || fallback).toLowerCase();
+  return email;
+}
+
+export function requireSeedAdminPassword(env: SeedEnv = process.env): string {
+  const password = env.SEED_ADMIN_PASSWORD;
+  if (!password || password.length === 0) {
+    throw new Error("SEED_ADMIN_PASSWORD is required");
+  }
+  if (password.length < 8) {
+    throw new Error("SEED_ADMIN_PASSWORD must be at least 8 characters");
+  }
+  return password;
 }
 
 function todayInTimeZone(timeZone: string): string {
@@ -50,12 +68,14 @@ function calendarYearInTimeZone(timeZone: string): number {
 
 export async function seed(env: SeedEnv = process.env): Promise<void> {
   const timezone = requireSeedTimezone(env);
+  const adminPassword = requireSeedAdminPassword(env);
   const url = getDatabaseUrl();
   if (!url) {
     throw new Error("DATABASE_URL is required to seed");
   }
 
-  const adminEmail = env.SEED_ADMIN_EMAIL?.trim() || DEMO_DEFAULT_ADMIN_EMAIL;
+  const adminEmail = normalizeSeedAdminEmail(env.SEED_ADMIN_EMAIL, DEMO_DEFAULT_ADMIN_EMAIL);
+  const passwordHash = await hashPassword(adminPassword);
   const today = todayInTimeZone(timezone);
   const year = calendarYearInTimeZone(timezone);
   const periodStart = `${year}-01-01`;
@@ -137,12 +157,34 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
         },
       ]);
 
+      const authUserId = crypto.randomUUID();
+      const now = new Date();
+      await tx.insert(user).values({
+        id: authUserId,
+        name: "Admin",
+        email: adminEmail,
+        emailVerified: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await tx.insert(account).values({
+        id: crypto.randomUUID(),
+        accountId: authUserId,
+        providerId: "credential",
+        userId: authUserId,
+        password: passwordHash,
+        createdAt: now,
+        updatedAt: now,
+      });
+
       await tx.insert(employees).values({
         orgId: org.id,
         email: adminEmail,
         name: "Admin",
         role: "admin",
         startDate: today,
+        authUserId,
+        mustChangePassword: true,
       });
 
       await tx.insert(policyPeriods).values({
@@ -154,6 +196,7 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
 
     console.log(`DEMO standard_workday_minutes=${DEMO_WORKDAY_MINUTES} (8.00h)`);
     console.log(`Seeded org "${DEMO_ORG_NAME}" timezone=${timezone} year=${year} (open)`);
+    console.log(`Seeded admin ${adminEmail} (must change password on first login)`);
     console.log("No holiday rows seeded.");
   } finally {
     await client.end({ timeout: 5 });

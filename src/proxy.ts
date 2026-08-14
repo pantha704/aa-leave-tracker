@@ -1,25 +1,22 @@
 import { NextRequest } from "next/server";
 import { applyAuthGate } from "@/server/auth-gate";
 import { getRequestActor } from "@/server/auth";
-import { contentSecurityPolicy } from "@/server/csp";
 import { getSessionCookie } from "better-auth/cookies";
+import { getDatabaseUrl } from "@/server/db";
+import { defaultInviteDeps } from "@/server/invite";
+import { gateInvitePath } from "@/server/invite-http";
 
 export async function proxy(request: NextRequest) {
-  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
-  const csp = contentSecurityPolicy({ nonce });
+  if (getDatabaseUrl()) {
+    const inviteRes = await gateInvitePath(request.nextUrl.pathname, defaultInviteDeps());
+    if (inviteRes) return inviteRes;
+  }
 
-  const requestHeaders = new Headers(request.headers);
-  requestHeaders.set("x-nonce", nonce);
-  requestHeaders.set("Content-Security-Policy", csp);
-  const nextRequest = new NextRequest(request, { headers: requestHeaders });
-
-  const sessionCookie = getSessionCookie(nextRequest);
+  const sessionCookie = getSessionCookie(request);
   const actor = sessionCookie
-    ? await getRequestActor(nextRequest)
+    ? await getRequestActor(request)
     : { kind: "anonymous" as const };
-  const response = applyAuthGate(nextRequest, actor);
-  response.headers.set("Content-Security-Policy", csp);
-  return response;
+  return applyAuthGate(request, actor);
 }
 
 export const config = {

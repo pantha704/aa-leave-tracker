@@ -3,6 +3,7 @@ import {
   canAdjustLedger,
   canAdmin,
   canCancelEntry,
+  canCreateEmployee,
   canReadEmployee,
   canWriteEntry,
   type AuthzActor,
@@ -33,6 +34,15 @@ describe("canAdmin / canAdjustLedger", () => {
     expect(canAdjustLedger(admin)).toBe(true);
     expect(canAdjustLedger(alice)).toBe(false);
     expect(canAdjustLedger(undefined)).toBe(false);
+  });
+});
+
+describe("canCreateEmployee", () => {
+  it("is admin only — employees cannot create employees", () => {
+    expect(canCreateEmployee(admin)).toBe(true);
+    expect(canCreateEmployee(alice)).toBe(false);
+    expect(canCreateEmployee(manager)).toBe(false);
+    expect(canCreateEmployee(null)).toBe(false);
   });
 });
 

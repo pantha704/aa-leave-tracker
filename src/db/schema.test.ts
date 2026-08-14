@@ -7,7 +7,7 @@ import {
   DEMO_VACATION_TAKE_CEILING_MINUTES,
   DEMO_WORKDAY_MINUTES,
 } from "./demo-policy";
-import { requireSeedTimezone } from "./seed";
+import { requireSeedAdminPassword, requireSeedTimezone } from "./seed";
 import {
   auditEvents,
   blackoutDates,
@@ -119,5 +119,22 @@ describe("normative schema", () => {
     expect(() => requireSeedTimezone({})).toThrow(/SEED_TIMEZONE is required/);
     expect(() => requireSeedTimezone({ SEED_TIMEZONE: "   " })).toThrow(/SEED_TIMEZONE is required/);
     expect(requireSeedTimezone({ SEED_TIMEZONE: "UTC" })).toBe("UTC");
+  });
+
+  it("requires SEED_ADMIN_PASSWORD for the admin credential", () => {
+    expect(() => requireSeedAdminPassword({})).toThrow(/SEED_ADMIN_PASSWORD is required/);
+    expect(() => requireSeedAdminPassword({ SEED_ADMIN_PASSWORD: "" })).toThrow(
+      /SEED_ADMIN_PASSWORD is required/,
+    );
+    expect(() => requireSeedAdminPassword({ SEED_ADMIN_PASSWORD: "short" })).toThrow(
+      /at least 8 characters/,
+    );
+    expect(requireSeedAdminPassword({ SEED_ADMIN_PASSWORD: "long-enough" })).toBe("long-enough");
+  });
+
+  it("adds must_change_password and auth_user_id on employees", () => {
+    const cols = getTableColumns(employees);
+    expect(cols.mustChangePassword.name).toBe("must_change_password");
+    expect(cols.authUserId.name).toBe("auth_user_id");
   });
 });

@@ -47,6 +47,16 @@ docker run --name aa-leave-postgres \
 | `bun run test` | Vitest |
 | `bun run db:generate` | Drizzle Kit generate |
 | `bun run db:migrate` | Apply Drizzle migrations |
-| `bun run db:seed` | Seed DEMO org (requires `SEED_TIMEZONE`) |
+| `bun run db:seed` | Seed DEMO org (requires `SEED_TIMEZONE` and `SEED_ADMIN_PASSWORD`) |
 
-Auth lands in a later PR. Do not commit `.env`.
+## Auth
+
+Email + password via Better Auth. There is no public registration endpoint.
+
+- `BETTER_AUTH_SECRET` is required at runtime (not for `GET /api/health`).
+- Seed creates the admin employee and a credential. `SEED_ADMIN_PASSWORD` is required.
+- First admin login is forced through `/login/change-password`.
+- After login: admin → `/admin`, employee → `/me`.
+- Employees who `GET /admin` receive **403** (not 404).
+
+Do not commit `.env`.

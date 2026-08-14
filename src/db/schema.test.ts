@@ -3,6 +3,7 @@ import { getTableColumns } from "drizzle-orm";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import {
   DEMO_SICK_GRANT_MINUTES,
+  DEMO_VACATION_GRANT_MINUTES,
   DEMO_VACATION_TAKE_CEILING_MINUTES,
   DEMO_WORKDAY_MINUTES,
 } from "./demo-policy";
@@ -52,6 +53,7 @@ const tables = {
 describe("demo-policy DEMO constants", () => {
   it("exports integer DEMO minutes (8.00h workday, 17d vacation, 3d sick)", () => {
     expect(DEMO_WORKDAY_MINUTES).toBe(480);
+    expect(DEMO_VACATION_GRANT_MINUTES).toBe(8160);
     expect(DEMO_VACATION_TAKE_CEILING_MINUTES).toBe(8160);
     expect(DEMO_SICK_GRANT_MINUTES).toBe(1440);
   });

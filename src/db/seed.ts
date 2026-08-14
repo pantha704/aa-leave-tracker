@@ -7,9 +7,12 @@ import {
   DEMO_MIN_INCREMENT_MINUTES,
   DEMO_ORG_NAME,
   DEMO_SICK_GRANT_MINUTES,
+  DEMO_SICK_POLICY_NAME,
   DEMO_SICK_TYPE_CODE,
   DEMO_SICK_TYPE_NAME,
+  DEMO_VACATION_GRANT_MINUTES,
   DEMO_VACATION_PERIODIC_MINUTES,
+  DEMO_VACATION_POLICY_NAME,
   DEMO_VACATION_TAKE_CEILING_MINUTES,
   DEMO_VACATION_TYPE_CODE,
   DEMO_VACATION_TYPE_NAME,
@@ -104,14 +107,13 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
       const vacationId = vacationType.code === DEMO_VACATION_TYPE_CODE ? vacationType.id : sickType.id;
       const sickId = sickType.code === DEMO_SICK_TYPE_CODE ? sickType.id : vacationType.id;
 
-      // DEMO: 17 days/year × 480 min = 8160. Monthly 680 min (680×12=8160).
-      // Last month can absorb remainder when the year does not divide evenly; remainder is 0 for this DEMO.
       await tx.insert(policies).values([
         {
           orgId: org.id,
           leaveTypeId: vacationId,
-          name: DEMO_VACATION_TYPE_NAME,
+          name: DEMO_VACATION_POLICY_NAME,
           grantMode: "periodic",
+          grantMinutes: DEMO_VACATION_GRANT_MINUTES,
           periodicCadence: "monthly",
           periodicMinutes: DEMO_VACATION_PERIODIC_MINUTES,
           takeCeilingMinutes: DEMO_VACATION_TAKE_CEILING_MINUTES,
@@ -124,7 +126,7 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
         {
           orgId: org.id,
           leaveTypeId: sickId,
-          name: DEMO_SICK_TYPE_NAME,
+          name: DEMO_SICK_POLICY_NAME,
           grantMode: "lump_sum",
           grantMinutes: DEMO_SICK_GRANT_MINUTES,
           takeCeilingMinutes: DEMO_SICK_GRANT_MINUTES,

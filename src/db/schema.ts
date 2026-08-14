@@ -17,9 +17,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
-// remaining is NEVER a column. Minutes are integer.
 // weekend_days: ISO 8601 (1=Mon … 7=Sun). Default Sat+Sun = {6,7}.
-// timezone: REQUIRED, no default.
 
 const citext = customType<{ data: string; driverData: string }>({
   dataType() {

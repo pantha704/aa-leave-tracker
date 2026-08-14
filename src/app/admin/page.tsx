@@ -11,12 +11,15 @@ export default async function AdminPage() {
       <header>
         <h1 className="text-3xl font-semibold tracking-tight">Admin</h1>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          Roster, holidays, leave types, and CSV import for this organization.
+          Roster, policy, holidays, import/export, and year close for this organization.
         </p>
       </header>
       <nav className="flex flex-col gap-2 text-sm">
         <a className="underline" href="/admin/employees">
           Employees
+        </a>
+        <a className="underline" href="/admin/policies">
+          Policies
         </a>
         <a className="underline" href="/admin/holidays">
           Holidays
@@ -26,6 +29,12 @@ export default async function AdminPage() {
         </a>
         <a className="underline" href="/admin/import">
           CSV import
+        </a>
+        <a className="underline" href="/admin/year-end">
+          Year end
+        </a>
+        <a className="underline" href="/calendar">
+          Calendar
         </a>
       </nav>
       <section className="flex flex-col gap-2 border-t border-zinc-200 pt-6 dark:border-zinc-800">

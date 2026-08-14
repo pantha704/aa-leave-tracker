@@ -15,6 +15,10 @@
 /blob-report/
 /playwright/.cache/
 
+# local pg_dump output from src/ops/backup.sh
+/backups/
+/aa-leave-*.sql
+
 # next.js
 /.next/
 /out/

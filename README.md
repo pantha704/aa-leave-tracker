@@ -45,7 +45,7 @@ docker run --name aa-leave-postgres \
 | `bun start` | Serve the production build |
 | `bun run typecheck` | `next typegen && tsc --noEmit` |
 | `bun run test` | Vitest |
-| `bun run test:e2e` | Playwright e2e (`tests/e2e/`). In CI this skips unless `PLAYWRIGHT=1` |
+| `bun run test:e2e` | Playwright. CI runs `@smoke` only; set `PLAYWRIGHT=1` for the full suite |
 | `bun run db:generate` | Drizzle Kit generate |
 | `bun run db:migrate` | Apply Drizzle migrations |
 | `bun run db:seed` | Seed DEMO org (requires `SEED_TIMEZONE` and `SEED_ADMIN_PASSWORD`) |
@@ -65,12 +65,13 @@ Email + password via Better Auth. There is no public registration endpoint.
 - Admin roster at `/admin/employees` (search, remaining vacation hours, last entry). Employee file has balances, ledger, entries, policy assign, and required-reason hour adjustments. Approve/reject/cancel go through `decide.ts`. Every admin page shows a pending-request badge.
 - Session cookies are `httpOnly`, `SameSite=Lax`, and `Secure` when `NODE_ENV=production`.
 - In production set `BETTER_AUTH_URL` to an `https://` origin.
-- Login is throttled in-memory per client IP (10 attempts / 15 minutes) on `/login` and `/api/auth/sign-in/*`.
-- Responses set a `Content-Security-Policy` (see `next.config.ts`).
+- Login is throttled in-memory per process (10 attempts / 15 minutes) on `/login` and `POST /api/auth/sign-in/*`. Successful sign-in resets that IP. This is **not** shared across Node instances or serverless isolates.
+- Client `X-Forwarded-For` / `X-Real-IP` are ignored unless `TRUST_PROXY=1` (then the **rightmost** XFF hop is used). Do not enable `TRUST_PROXY` unless a reverse proxy overwrites those headers.
+- Document responses set a per-request `Content-Security-Policy` in `src/proxy.ts` (nonce + `strict-dynamic`; production `script-src` has no `'unsafe-inline'` or `'unsafe-eval'`). `style-src` still allows `'unsafe-inline'` because React/Tailwind emit style attributes and next/font injects CSS. Complementary headers (`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options`) are in `next.config.ts`.
 
 ## Backup
 
-`src/ops/backup.sh` runs `pg_dump` against `DATABASE_URL` (requires `pg_dump` on `PATH`).
+`src/ops/backup.sh` is a **local plaintext** `pg_dump` of `DATABASE_URL` (`umask 077`). It is not offsite, IAM-managed, or encrypted. Default output is `backups/aa-leave-<UTC>.sql` (gitignored). Pass an explicit path to write elsewhere. Refuses to overwrite. `pg_dump` must be on `PATH`. Optional encrypt: `gpg -c backups/aa-leave-….sql`.
 
 ```bash
 ./src/ops/backup.sh
@@ -79,7 +80,7 @@ Email + password via Better Auth. There is no public registration endpoint.
 
 ## End-to-end tests
 
-Playwright specs live in `tests/e2e/` (employee log flow + import dry-run / remaining-hours diff). CI skips them unless `PLAYWRIGHT=1`.
+Playwright specs live in `tests/e2e/` (employee log, admin approve, import remaining-hours diff). CI installs Chromium and runs `@smoke` (login, unauth redirects, CSP header). Set `PLAYWRIGHT=1` for the full suite.
 
 ```bash
 bunx playwright install chromium
@@ -88,11 +89,12 @@ bun run test:e2e
 bunx playwright test
 ```
 
-Authenticated flows need a running app plus:
+Authenticated flows need a running app plus creds with `must_change_password = false` (or set `E2E_NEW_PASSWORD` so `signIn` can complete `/login/change-password`):
 
-- `E2E_EMPLOYEE_EMAIL` / `E2E_EMPLOYEE_PASSWORD` for `/me` log
-- `E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD` for `/admin/import` dry-run
+- `E2E_EMPLOYEE_EMAIL` / `E2E_EMPLOYEE_PASSWORD` for `/me` log and the approve flow
+- `E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD` for `/admin/import` and approve
+- `E2E_IMPORT_EMAIL` (defaults to the employee or admin email) and optional `E2E_IMPORT_LEAVE_TYPE` (default `vacation_unpaid`)
 
-Without those env vars the specs still smoke `/login` and the unauthenticated redirect. Override the server with `PLAYWRIGHT_BASE_URL` if it is already running.
+Without those env vars the `@smoke` specs still run. Override the server with `PLAYWRIGHT_BASE_URL` if it is already running.
 
 Do not commit `.env`.

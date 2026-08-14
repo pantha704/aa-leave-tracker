@@ -64,7 +64,7 @@ export function applyAuthGate(request: NextRequest, actor: Actor): NextResponse 
   const pathname = request.nextUrl.pathname;
 
   if (isHealthPath(pathname) || isAuthApiPath(pathname)) {
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: request.headers } });
   }
 
   const isLogin = pathname === "/login";
@@ -76,7 +76,7 @@ export function applyAuthGate(request: NextRequest, actor: Actor): NextResponse 
       const login = new URL("/login", request.url);
       return NextResponse.redirect(login);
     }
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: request.headers } });
   }
 
   if (actor.mustChangePassword && !isChangePassword) {
@@ -91,5 +91,5 @@ export function applyAuthGate(request: NextRequest, actor: Actor): NextResponse 
     return NextResponse.redirect(new URL(homeForRole(actor.role), request.url));
   }
 
-  return NextResponse.next();
+  return NextResponse.next({ request: { headers: request.headers } });
 }

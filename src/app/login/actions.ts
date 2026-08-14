@@ -14,6 +14,7 @@ import { getDb } from "@/server/db";
 import {
   clientIpFromHeaders,
   consumeLoginAttempt,
+  loginThrottleMessage,
   resetLoginAttempts,
 } from "@/server/rate-limit";
 
@@ -32,7 +33,7 @@ export async function signInAction(
   const ip = clientIpFromHeaders(await headers());
   const limited = consumeLoginAttempt(ip);
   if (!limited.ok) {
-    return { error: "Too many login attempts. Try again later." };
+    return { error: loginThrottleMessage(limited.retryAfterSec) };
   }
 
   let user: { id: string; email: string };

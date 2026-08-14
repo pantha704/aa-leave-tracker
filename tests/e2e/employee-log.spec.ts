@@ -1,14 +1,16 @@
 import { test, expect } from "@playwright/test";
-import { employeeCreds, signIn } from "./helpers";
+import { employeeCreds, nextWeekday, readAsOfDate, selectLeaveType, signIn } from "./helpers";
 
-test("login page is reachable", async ({ page }) => {
-  await page.goto("/login");
+test("login page is reachable", { tag: "@smoke" }, async ({ page }) => {
+  const res = await page.goto("/login");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await expect(page.locator('input[name="email"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  const csp = res?.headers()["content-security-policy"] ?? "";
+  expect(csp).toMatch(/default-src 'self'/);
 });
 
-test("unauthenticated /me redirects to login", async ({ page }) => {
+test("unauthenticated /me redirects to login", { tag: "@smoke" }, async ({ page }) => {
   await page.goto("/me");
   await expect(page).toHaveURL(/\/login/);
 });
@@ -22,11 +24,13 @@ test("employee can log leave", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "My leave" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Log / request" })).toBeVisible();
 
-  const today = new Date().toISOString().slice(0, 10);
-  await page.locator('input[name="startDate"]').fill(today);
-  await page.locator('input[name="endDate"]').fill(today);
-  const submit = page.getByRole("button", { name: "Submit" });
-  await expect(submit).toBeEnabled();
-  await submit.click();
-  await expect(page.getByRole("status")).toContainText(/Logged|Requested/);
+  const asOf = await readAsOfDate(page);
+  const day = nextWeekday(asOf);
+  await page.locator('input[name="startDate"]').fill(day);
+  await page.locator('input[name="endDate"]').fill(day);
+  await selectLeaveType(page);
+  const form = page.locator("form").filter({ has: page.getByRole("button", { name: "Submit" }) });
+  await expect(form.getByRole("button", { name: "Submit" })).toBeEnabled();
+  await form.getByRole("button", { name: "Submit" }).click();
+  await expect(form.getByRole("status")).toContainText(/Logged|Requested/);
 });

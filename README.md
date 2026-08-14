@@ -46,5 +46,7 @@ docker run --name aa-leave-postgres \
 | `bun run typecheck` | `next typegen && tsc --noEmit` |
 | `bun run test` | Vitest |
 | `bun run db:generate` | Drizzle Kit generate |
+| `bun run db:migrate` | Apply Drizzle migrations |
+| `bun run db:seed` | Seed DEMO org (requires `SEED_TIMEZONE`) |
 
-Schema and auth land in later PRs. Do not commit `.env`.
+Auth lands in a later PR. Do not commit `.env`.

@@ -9,7 +9,9 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:seed": "bun run src/db/seed.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

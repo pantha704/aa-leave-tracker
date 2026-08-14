@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import type { LeaveTypeRecord } from "@/server/leave-types";
 import {
   createLeaveTypeAction,
@@ -30,7 +30,13 @@ function FormAlert({ state }: { state: LeaveTypeFormState }) {
   );
 }
 
-function LeaveTypeFields({ value }: { value?: LeaveTypeRecord }) {
+function LeaveTypeFields({
+  value,
+  lockIdentity,
+}: {
+  value?: LeaveTypeRecord;
+  lockIdentity?: boolean;
+}) {
   return (
     <>
       <label className="flex flex-col gap-1 text-xs">
@@ -47,17 +53,33 @@ function LeaveTypeFields({ value }: { value?: LeaveTypeRecord }) {
           className={fieldClass}
           name="consumesBalance"
           defaultValue={value?.consumesBalance === false ? "false" : "true"}
+          disabled={lockIdentity}
         >
           <option value="true">Yes</option>
           <option value="false">No</option>
         </select>
+        {lockIdentity ? (
+          <input
+            type="hidden"
+            name="consumesBalance"
+            value={value?.consumesBalance === false ? "false" : "true"}
+          />
+        ) : null}
       </label>
       <label className="flex flex-col gap-1 text-xs">
         Legal unit
-        <select className={fieldClass} name="legalUnit" defaultValue={value?.legalUnit ?? "hours"}>
+        <select
+          className={fieldClass}
+          name="legalUnit"
+          defaultValue={value?.legalUnit ?? "hours"}
+          disabled={lockIdentity}
+        >
           <option value="hours">hours</option>
           <option value="days">days</option>
         </select>
+        {lockIdentity ? (
+          <input type="hidden" name="legalUnit" value={value?.legalUnit ?? "hours"} />
+        ) : null}
       </label>
       <label className="flex flex-col gap-1 text-xs">
         Min increment (minutes)
@@ -74,15 +96,42 @@ function LeaveTypeFields({ value }: { value?: LeaveTypeRecord }) {
         Color
         <input className={fieldClass} name="color" defaultValue={value?.color ?? ""} />
       </label>
+      <label className="flex flex-col gap-1 text-xs">
+        Unlimited
+        <select
+          className={fieldClass}
+          name="unlimited"
+          defaultValue={value?.unlimited === true ? "true" : "false"}
+        >
+          <option value="false">No</option>
+          <option value="true">Yes</option>
+        </select>
+      </label>
+      <label className="flex flex-col gap-1 text-xs">
+        Visible on team calendar
+        <select
+          className={fieldClass}
+          name="visibleOnTeamCalendar"
+          defaultValue={value?.visibleOnTeamCalendar === false ? "false" : "true"}
+        >
+          <option value="true">Yes</option>
+          <option value="false">No</option>
+        </select>
+      </label>
     </>
   );
 }
 
 export function CreateLeaveTypeForm() {
   const [state, action, pending] = useActionState(createLeaveTypeAction, undefined);
+  const [formKey, setFormKey] = useState(0);
+
+  useEffect(() => {
+    if (state?.ok) setFormKey((key) => key + 1);
+  }, [state]);
 
   return (
-    <form action={action} className="flex flex-col gap-3">
+    <form key={formKey} action={action} className="flex flex-col gap-3">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <LeaveTypeFields />
       </div>
@@ -105,7 +154,7 @@ export function EditLeaveTypeForm({ leaveType }: { leaveType: LeaveTypeRecord })
     <div className="flex flex-col gap-2 border-b border-zinc-100 py-4 dark:border-zinc-900">
       <form action={action} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <input type="hidden" name="id" value={leaveType.id} />
-        <LeaveTypeFields value={leaveType} />
+        <LeaveTypeFields value={leaveType} lockIdentity={leaveType.inUse} />
         <div className="flex items-end">
           <button className={buttonClass} type="submit" disabled={pending}>
             Save

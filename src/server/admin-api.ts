@@ -33,6 +33,16 @@ export const defaultAdminGateDeps: AdminGateDeps = {
   loadOrgId: loadActorOrgId,
 };
 
+export async function readJsonBody(
+  request: NextRequest,
+): Promise<{ ok: true; value: unknown } | { ok: false; error: string }> {
+  try {
+    return { ok: true, value: await request.json() };
+  } catch {
+    return { ok: false, error: "invalid JSON body" };
+  }
+}
+
 export async function requireAdminApi(
   request: NextRequest,
   deps: AdminGateDeps = defaultAdminGateDeps,

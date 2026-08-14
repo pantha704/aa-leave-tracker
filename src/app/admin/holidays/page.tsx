@@ -1,5 +1,6 @@
 import { requireAdmin } from "@/server/auth";
 import { loadOrgHolidays } from "@/server/holidays/import";
+import { deleteHolidayAction } from "./actions";
 import { HolidayImportForm } from "./holiday-import-form";
 
 export default async function AdminHolidaysPage() {
@@ -30,13 +31,14 @@ export default async function AdminHolidaysPage() {
               <tr className="border-b border-zinc-200 dark:border-zinc-800">
                 <th className="py-2 pr-4 font-medium">Date</th>
                 <th className="py-2 pr-4 font-medium">Name</th>
-                <th className="py-2 font-medium">Region</th>
+                <th className="py-2 pr-4 font-medium">Region</th>
+                <th className="py-2 font-medium"> </th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td className="py-4 text-zinc-600 dark:text-zinc-400" colSpan={3}>
+                  <td className="py-4 text-zinc-600 dark:text-zinc-400" colSpan={4}>
                     No holidays yet.
                   </td>
                 </tr>
@@ -45,7 +47,15 @@ export default async function AdminHolidaysPage() {
                   <tr key={row.id} className="border-b border-zinc-100 dark:border-zinc-900">
                     <td className="py-2 pr-4 font-mono">{row.onDate}</td>
                     <td className="py-2 pr-4">{row.name}</td>
-                    <td className="py-2">{row.region ?? ""}</td>
+                    <td className="py-2 pr-4">{row.region ?? ""}</td>
+                    <td className="py-2">
+                      <form action={deleteHolidayAction}>
+                        <input type="hidden" name="id" value={row.id} />
+                        <button className="text-red-600 underline" type="submit">
+                          Delete
+                        </button>
+                      </form>
+                    </td>
                   </tr>
                 ))
               )}

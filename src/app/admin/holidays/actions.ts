@@ -2,12 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/server/auth";
-import { dbHolidayImportDeps, importHolidayCsv } from "@/server/holidays/import";
+import { dbHolidayImportDeps, deleteHoliday, importHolidayCsv } from "@/server/holidays/import";
 
 export type HolidayImportState =
-  | { ok: true; imported: number }
+  | { ok: true; imported: number; updated: number }
   | { ok: false; error: string; errors?: { line: number; message: string }[]; errorCsv?: string }
   | undefined;
+
+function refresh() {
+  revalidatePath("/admin/holidays");
+}
 
 export async function importHolidaysAction(
   _prev: HolidayImportState,
@@ -19,8 +23,12 @@ export async function importHolidaysAction(
     return { ok: false, error: "Choose a CSV file" };
   }
 
+  const replace = formData.get("replaceExisting");
   const csv = await file.text();
-  const result = await importHolidayCsv(employee.orgId, csv, dbHolidayImportDeps);
+  const result = await importHolidayCsv(employee.orgId, csv, dbHolidayImportDeps, {
+    mode: replace === "on" || replace === "true" || replace === "1" ? "upsert" : "insert",
+    actorId: employee.id,
+  });
   if (!result.ok) {
     return {
       ok: false,
@@ -30,6 +38,14 @@ export async function importHolidaysAction(
     };
   }
 
-  revalidatePath("/admin/holidays");
-  return { ok: true, imported: result.imported };
+  refresh();
+  return { ok: true, imported: result.imported, updated: result.updated };
+}
+
+export async function deleteHolidayAction(formData: FormData): Promise<void> {
+  const { employee } = await requireAdmin();
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  await deleteHoliday(employee.orgId, id, { actorId: employee.id });
+  refresh();
 }

@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { defaultAdminGateDeps, requireAdminApi, type AdminGateDeps } from "@/server/admin-api";
+import {
+  defaultAdminGateDeps,
+  readJsonBody,
+  requireAdminApi,
+  type AdminGateDeps,
+} from "@/server/admin-api";
 import {
   deleteLeaveType,
   parseLeaveTypeInput,
   updateLeaveType,
   type LeaveTypeInput,
   type LeaveTypeRecord,
+  type LeaveTypeWriteOptions,
 } from "@/server/leave-types";
 
 export type AdminLeaveTypeItemDeps = AdminGateDeps & {
@@ -13,12 +19,14 @@ export type AdminLeaveTypeItemDeps = AdminGateDeps & {
     orgId: string,
     id: string,
     input: LeaveTypeInput,
+    options?: LeaveTypeWriteOptions,
   ) => Promise<
     { ok: true; leaveType: LeaveTypeRecord } | { ok: false; error: string; status: 404 | 409 }
   >;
   deleteType: (
     orgId: string,
     id: string,
+    options?: LeaveTypeWriteOptions,
   ) => Promise<{ ok: true } | { ok: false; error: string; status: 404 | 409 }>;
 };
 
@@ -38,12 +46,19 @@ export async function patchAdminLeaveType(
     return NextResponse.json(gate.body, { status: gate.status });
   }
 
-  const parsed = parseLeaveTypeInput(await request.json());
+  const body = await readJsonBody(request);
+  if (!body.ok) {
+    return NextResponse.json({ error: body.error }, { status: 400 });
+  }
+
+  const parsed = parseLeaveTypeInput(body.value);
   if (!parsed.ok) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
 
-  const result = await deps.updateType(gate.context.orgId, id, parsed.value);
+  const result = await deps.updateType(gate.context.orgId, id, parsed.value, {
+    actorId: gate.context.actor.id,
+  });
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
@@ -60,7 +75,9 @@ export async function deleteAdminLeaveType(
     return NextResponse.json(gate.body, { status: gate.status });
   }
 
-  const result = await deps.deleteType(gate.context.orgId, id);
+  const result = await deps.deleteType(gate.context.orgId, id, {
+    actorId: gate.context.actor.id,
+  });
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }

@@ -24,7 +24,7 @@ export async function createLeaveTypeAction(
   const parsed = parseLeaveTypeInput(leaveTypeFromForm(formData));
   if (!parsed.ok) return { ok: false, error: parsed.error };
 
-  const result = await createLeaveType(employee.orgId, parsed.value);
+  const result = await createLeaveType(employee.orgId, parsed.value, { actorId: employee.id });
   if (!result.ok) return { ok: false, error: result.error };
   refresh();
   return { ok: true };
@@ -41,7 +41,7 @@ export async function updateLeaveTypeAction(
   const parsed = parseLeaveTypeInput(leaveTypeFromForm(formData));
   if (!parsed.ok) return { ok: false, error: parsed.error };
 
-  const result = await updateLeaveType(employee.orgId, id, parsed.value);
+  const result = await updateLeaveType(employee.orgId, id, parsed.value, { actorId: employee.id });
   if (!result.ok) return { ok: false, error: result.error };
   refresh();
   return { ok: true };
@@ -55,7 +55,7 @@ export async function deleteLeaveTypeAction(
   const id = String(formData.get("id") ?? "");
   if (!id) return { ok: false, error: "leave type id is required" };
 
-  const result = await deleteLeaveType(employee.orgId, id);
+  const result = await deleteLeaveType(employee.orgId, id, { actorId: employee.id });
   if (!result.ok) return { ok: false, error: result.error };
   refresh();
   return { ok: true };

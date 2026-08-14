@@ -53,13 +53,28 @@ export function parseIsoDate(value: string): string | null {
   return `${match[1]}-${match[2]}-${match[3]}`;
 }
 
-export function parseCsvRecords(text: string): string[][] {
+export type CsvRecord = {
+  line: number;
+  cells: string[];
+};
+
+export function parseCsvRecords(text: string): CsvRecord[] {
   const source = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const records: string[][] = [];
+  const records: CsvRecord[] = [];
   let row: string[] = [];
   let field = "";
   let inQuotes = false;
   let i = 0;
+  let line = 1;
+  let recordLine = 1;
+
+  const flushRecord = () => {
+    if (row.some((cell) => cell.trim().length > 0)) {
+      records.push({ line: recordLine, cells: row });
+    }
+    row = [];
+    field = "";
+  };
 
   while (i < source.length) {
     const ch = source[i];
@@ -74,6 +89,7 @@ export function parseCsvRecords(text: string): string[][] {
         i += 1;
         continue;
       }
+      if (ch === "\n") line += 1;
       field += ch;
       i += 1;
       continue;
@@ -91,9 +107,9 @@ export function parseCsvRecords(text: string): string[][] {
     }
     if (ch === "\n") {
       row.push(field);
-      records.push(row);
-      row = [];
-      field = "";
+      flushRecord();
+      line += 1;
+      recordLine = line;
       i += 1;
       continue;
     }
@@ -103,10 +119,10 @@ export function parseCsvRecords(text: string): string[][] {
 
   if (inQuotes || field.length > 0 || row.length > 0) {
     row.push(field);
-    records.push(row);
+    flushRecord();
   }
 
-  return records.filter((cells) => cells.some((cell) => cell.trim().length > 0));
+  return records;
 }
 
 export type HolidayHeaderMap = {
@@ -155,18 +171,18 @@ export function parseHolidayCsv(text: string): HolidayCsvParseResult {
     return { rows: [], errors: [{ line: 1, message: "missing header row" }] };
   }
 
-  const mapped = mapHolidayHeaders(records[0]);
+  const mapped = mapHolidayHeaders(records[0].cells);
   if ("error" in mapped) {
-    return { rows: [], errors: [{ line: 1, message: mapped.error }] };
+    return { rows: [], errors: [{ line: records[0].line, message: mapped.error }] };
   }
 
   const rows: HolidayCsvRow[] = [];
   const errors: HolidayCsvError[] = [];
   const seen = new Map<string, number>();
 
-  for (let i = 1; i < records.length; i += 1) {
-    const line = i + 1;
-    const cells = records[i];
+  for (const record of records.slice(1)) {
+    const line = record.line;
+    const cells = record.cells;
     const rawDate = cells[mapped.date] ?? "";
     const rawName = cells[mapped.name] ?? "";
     const rawRegion = mapped.region == null ? "" : (cells[mapped.region] ?? "");

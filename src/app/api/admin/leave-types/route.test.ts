@@ -58,6 +58,60 @@ describe("GET/POST /api/admin/leave-types", () => {
     });
     expect(list.status).toBe(200);
     await expect(list.json()).resolves.toEqual({ leaveTypes: [] });
+
+    const created = {
+      id: "lt-1",
+      orgId: "org-1",
+      code: "wfh",
+      name: "WFH",
+      consumesBalance: false,
+      legalUnit: "hours",
+      minIncrementMinutes: null,
+      color: null,
+      unlimited: false,
+      visibleOnTeamCalendar: true,
+    };
+    const post = await postAdminLeaveType(
+      req("/api/admin/leave-types", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          code: "WFH",
+          name: "WFH",
+          consumesBalance: false,
+          legalUnit: "hours",
+          minIncrementMinutes: null,
+          color: null,
+        }),
+      }),
+      {
+        getAuthzActor: async () => ({ id: "admin", role: "admin" }),
+        loadOrgId: async () => "org-1",
+        listTypes: async () => [],
+        createType: async (_orgId, input) => {
+          expect(input.code).toBe("wfh");
+          return { ok: true, leaveType: { ...created, ...input, id: "lt-1", orgId: "org-1" } };
+        },
+      },
+    );
+    expect(post.status).toBe(201);
+  });
+
+  it("invalid JSON body is 400", async () => {
+    const res = await postAdminLeaveType(
+      req("/api/admin/leave-types", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{",
+      }),
+      {
+        getAuthzActor: async () => ({ id: "admin", role: "admin" }),
+        loadOrgId: async () => "org-1",
+        ...unused,
+      },
+    );
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "invalid JSON body" });
   });
 });
 

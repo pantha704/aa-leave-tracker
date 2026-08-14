@@ -52,8 +52,9 @@ describe("POST /api/admin/holidays/import", () => {
           throw new Error("must not import");
         },
         holidayDeps: {
-          loadExisting: async () => [],
-          insertRows: async () => [],
+          apply: async () => {
+            throw new Error("must not apply");
+          },
         },
       },
     );
@@ -76,9 +77,8 @@ describe("POST /api/admin/holidays/import", () => {
           return importHolidayCsv(orgId, csv, deps);
         },
         holidayDeps: {
-          loadExisting: async () => [],
-          insertRows: async () => {
-            throw new Error("must not insert");
+          apply: async () => {
+            throw new Error("must not apply");
           },
         },
       },

@@ -18,9 +18,13 @@ export function HolidayImportForm() {
           required
         />
       </label>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" name="replaceExisting" value="on" defaultChecked />
+        Update names when the date and region already exist
+      </label>
       <p className="text-xs text-zinc-600 dark:text-zinc-400">
         Columns: date, name, optional region. Dates are ISO <code>YYYY-MM-DD</code>. Unique per
-        organization, date, and region.
+        organization, date, and region. New dates import all-or-nothing.
       </p>
       {state ? <ImportResult state={state} /> : null}
       <button
@@ -38,7 +42,7 @@ function ImportResult({ state }: { state: NonNullable<HolidayImportState> }) {
   if (state.ok) {
     return (
       <p className="mt-0 text-sm text-zinc-700 dark:text-zinc-300" role="status">
-        Imported {state.imported} holiday{state.imported === 1 ? "" : "s"}.
+        Imported {state.imported}, updated {state.updated}.
       </p>
     );
   }

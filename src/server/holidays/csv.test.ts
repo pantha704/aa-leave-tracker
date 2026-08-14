@@ -80,4 +80,10 @@ describe("parseHolidayCsv", () => {
     expect(parseIsoDate("2026-02-31")).toBeNull();
     expect(parseIsoDate("2026-02-28")).toBe("2026-02-28");
   });
+
+  it("keeps physical line numbers across blank rows", () => {
+    const result = parseHolidayCsv("date,name\n\nbad,A");
+    expect(result.errors).toEqual([{ line: 3, field: "date", message: "invalid date: bad" }]);
+    expect(result.rows).toEqual([]);
+  });
 });

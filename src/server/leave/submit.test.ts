@@ -222,7 +222,7 @@ describe("submitLeave", () => {
       startDate: "2026-06-08",
       endDate: "2026-06-08",
     });
-    expect(readonly).toMatchObject({ ok: false, status: 403, code: "APP_READONLY" });
+    expect(readonly).toMatchObject({ ok: false, status: 423, code: "APP_READONLY" });
 
     const noLog = await submit(world({ orgSettings: { selfLogEnabled: false } }), {
       startDate: "2026-06-08",

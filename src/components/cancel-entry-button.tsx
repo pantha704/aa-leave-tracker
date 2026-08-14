@@ -3,7 +3,13 @@
 import { useActionState } from "react";
 import { cancelLeaveAction } from "@/app/me/actions";
 
-export function CancelEntryButton({ entryId }: { entryId: string }) {
+export function CancelEntryButton({
+  entryId,
+  appReadonly = false,
+}: {
+  entryId: string;
+  appReadonly?: boolean;
+}) {
   const [state, action, pending] = useActionState(cancelLeaveAction, undefined);
 
   return (
@@ -12,7 +18,7 @@ export function CancelEntryButton({ entryId }: { entryId: string }) {
       <button
         className="text-xs text-red-600 underline disabled:opacity-60"
         type="submit"
-        disabled={pending}
+        disabled={pending || appReadonly}
       >
         {pending ? "Cancelling…" : "Cancel"}
       </button>

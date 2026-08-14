@@ -42,7 +42,10 @@ export async function postAdminAdjustment(
     raw: body.value,
   });
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+    return NextResponse.json(
+      { error: result.error, ...(result.code ? { code: result.code } : {}) },
+      { status: result.status },
+    );
   }
   return NextResponse.json({ ledgerEntry: result.row }, { status: 201 });
 }

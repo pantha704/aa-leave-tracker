@@ -3,6 +3,7 @@ import { MemoryLedger } from "@/server/ledger/memory";
 import { IMPORT_OPENING_REASON } from "./csv";
 import {
   commitImport,
+  previewImport,
   reverseImportBatch,
   type ImportCommitStore,
   type ImportBatchRecord,
@@ -63,6 +64,7 @@ function memoryStore(): ImportCommitStore & {
     batches,
     entries,
     loadWorld,
+    isAppReadonly: async () => false,
     listBatches: async () => batches,
     applyCommit: async (input) => {
       const first = dryRunImport(input.csv, input.kind, input.map, await loadWorld(), input.options);
@@ -205,5 +207,73 @@ describe("commitImport / reverse", () => {
     expect(result.ok).toBe(false);
     expect(store.ledger.rows).toHaveLength(0);
     expect(store.batches).toHaveLength(0);
+  });
+
+  it("returns 423 when the app is readonly", async () => {
+    const store = memoryStore();
+    store.isAppReadonly = async () => true;
+    const result = await commitImport(
+      {
+        orgId: "org-1",
+        actor: { id: ADMIN, role: "admin" },
+        kind: "opening",
+        csv: [
+          "email,leave_type,as_of,remaining_hours",
+          "ada@example.com,vacation_unpaid,2026-03-01,10.00",
+        ].join("\n"),
+        map: openingMap,
+      },
+      store,
+      { writeAudit: async () => {} },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      status: 423,
+      code: "APP_READONLY",
+    });
+    expect(store.batches).toHaveLength(0);
+  });
+
+  it("still dry-runs when the app is readonly", async () => {
+    const store = memoryStore();
+    store.isAppReadonly = async () => true;
+    store.applyCommit = async () => {
+      throw new Error("must not commit");
+    };
+    const csv = [
+      "email,leave_type,as_of,remaining_hours",
+      "ada@example.com,vacation_unpaid,2026-03-01,10.00",
+    ].join("\n");
+    const preview = await previewImport("org-1", "opening", csv, openingMap, store);
+    expect(preview.ok).toBe(true);
+  });
+
+  it("returns 423 when reversing while readonly", async () => {
+    const store = memoryStore();
+    const csv = [
+      "email,leave_type,as_of,remaining_hours",
+      "ada@example.com,vacation_unpaid,2026-03-01,10.00",
+    ].join("\n");
+    const committed = await commitImport(
+      {
+        orgId: "org-1",
+        actor: { id: ADMIN, role: "admin" },
+        kind: "opening",
+        csv,
+        map: openingMap,
+      },
+      store,
+      { writeAudit: async () => {} },
+    );
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    store.isAppReadonly = async () => true;
+    const reversed = await reverseImportBatch(
+      { orgId: "org-1", batchId: committed.batch.id, actor: { id: ADMIN, role: "admin" } },
+      store,
+      { writeAudit: async () => {} },
+    );
+    expect(reversed).toMatchObject({ ok: false, status: 423, code: "APP_READONLY" });
+    expect(store.batches[0]?.reversedAt).toBeNull();
   });
 });

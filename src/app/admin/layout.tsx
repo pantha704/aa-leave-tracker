@@ -1,12 +1,18 @@
+import { OpsBanner } from "@/components/ops-banner";
 import { countPendingEntries } from "@/server/admin/employees";
 import { requireAdmin } from "@/server/auth";
+import { getOrgSettings } from "@/server/settings";
 
 export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
   const { employee } = await requireAdmin();
-  const pendingCount = await countPendingEntries(employee.orgId);
+  const [pendingCount, settings] = await Promise.all([
+    countPendingEntries(employee.orgId),
+    getOrgSettings(employee.orgId),
+  ]);
 
   return (
     <div className="flex min-h-full flex-1 flex-col">
+      <OpsBanner appReadonly={settings.appReadonly} />
       <header className="border-b border-zinc-200 px-6 py-3 text-sm dark:border-zinc-800">
         <nav className="mx-auto flex w-full max-w-5xl flex-wrap items-center gap-x-4 gap-y-2">
           <a className="font-medium" href="/admin">

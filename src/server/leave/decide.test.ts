@@ -88,6 +88,23 @@ describe("status machine", () => {
 });
 
 describe("decideLeave", () => {
+  it("returns 423 APP_READONLY for approve, reject, and cancel", async () => {
+    const store = world();
+    const submitted = await submitMonday(store);
+    expect(submitted.ok).toBe(true);
+    if (!submitted.ok) return;
+    store.orgSettings = { ...store.orgSettings, appReadonly: true };
+
+    for (const action of ["approve", "reject", "cancel"] as const) {
+      const decided = await decideLeave(
+        { actor: admin, entryId: submitted.entry.id, action },
+        { store, writeAudit: async () => undefined },
+      );
+      expect(decided).toMatchObject({ ok: false, status: 423, code: "APP_READONLY" });
+    }
+    expect(store.entries[0]?.status).toBe("pending");
+  });
+
   it("posts one usage row per LeaveDay on admin approve (effective_on = on_date)", async () => {
     const store = world();
     const submitted = await submitMonday(store);

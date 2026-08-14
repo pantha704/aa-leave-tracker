@@ -30,6 +30,9 @@ export async function importHolidaysAction(
     actorId: employee.id,
   });
   if (!result.ok) {
+    if ("status" in result) {
+      return { ok: false, error: result.error };
+    }
     return {
       ok: false,
       error: `${result.errors.length} row error(s)`,

@@ -10,6 +10,7 @@ import {
 import { tryWriteAudit, writeAuditEvent, type AuditWriter } from "./audit";
 import { getDb } from "./db";
 import { isForeignKeyViolation, isUniqueViolation } from "./pg-error";
+import { APP_READONLY_CODE, APP_READONLY_MESSAGE, isAppReadonly } from "./settings";
 
 export const leaveTypeInputSchema = z.object({
   code: z
@@ -46,7 +47,28 @@ export type LeaveTypeWriteOptions = {
   actorId?: string | null;
   writeAudit?: AuditWriter;
   store?: LeaveTypeStore;
+  isAppReadonly?: (orgId: string) => Promise<boolean>;
 };
+
+export type LeaveTypeWriteFail = {
+  ok: false;
+  error: string;
+  status: 404 | 409 | 423;
+  code?: string;
+};
+
+async function rejectIfFrozen(
+  orgId: string,
+  options: LeaveTypeWriteOptions,
+): Promise<LeaveTypeWriteFail | null> {
+  const frozen = options.isAppReadonly
+    ? await options.isAppReadonly(orgId)
+    : options.store
+      ? false
+      : await isAppReadonly(orgId);
+  if (!frozen) return null;
+  return { ok: false, status: 423, code: APP_READONLY_CODE, error: APP_READONLY_MESSAGE };
+}
 
 export type LeaveTypeStore = {
   getById: (orgId: string, id: string) => Promise<LeaveTypeRecord | null>;
@@ -239,7 +261,9 @@ export async function createLeaveType(
   orgId: string,
   input: LeaveTypeInput,
   options: LeaveTypeWriteOptions = {},
-): Promise<{ ok: true; leaveType: LeaveTypeRecord } | { ok: false; error: string; status: 409 }> {
+): Promise<{ ok: true; leaveType: LeaveTypeRecord } | LeaveTypeWriteFail> {
+  const frozen = await rejectIfFrozen(orgId, options);
+  if (frozen) return frozen;
   const store = storeOf(options);
   const clash = await store.findIdByCode(orgId, input.code);
   if (clash) {
@@ -269,9 +293,9 @@ export async function updateLeaveType(
   id: string,
   input: LeaveTypeInput,
   options: LeaveTypeWriteOptions = {},
-): Promise<
-  { ok: true; leaveType: LeaveTypeRecord } | { ok: false; error: string; status: 404 | 409 }
-> {
+): Promise<{ ok: true; leaveType: LeaveTypeRecord } | LeaveTypeWriteFail> {
+  const frozen = await rejectIfFrozen(orgId, options);
+  if (frozen) return frozen;
   const store = storeOf(options);
   const existing = await store.getById(orgId, id);
   if (!existing) {
@@ -321,7 +345,9 @@ export async function deleteLeaveType(
   orgId: string,
   id: string,
   options: LeaveTypeWriteOptions = {},
-): Promise<{ ok: true } | { ok: false; error: string; status: 404 | 409 }> {
+): Promise<{ ok: true } | LeaveTypeWriteFail> {
+  const frozen = await rejectIfFrozen(orgId, options);
+  if (frozen) return frozen;
   const store = storeOf(options);
   const existing = await store.getById(orgId, id);
   if (!existing) {

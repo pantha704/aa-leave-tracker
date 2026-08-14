@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { loadEmployeeFile, minutesToHours } from "@/server/admin/employees";
 import { requireAdmin } from "@/server/auth";
+import { getOrgSettings } from "@/server/settings";
 import {
   AdjustHoursForm,
   AssignPolicyForm,
@@ -17,7 +18,10 @@ export default async function AdminEmployeeFilePage({
 }: PageProps<"/admin/employees/[id]">) {
   const { employee: actor } = await requireAdmin();
   const { id } = await params;
-  const file = await loadEmployeeFile({ orgId: actor.orgId, employeeId: id });
+  const [file, settings] = await Promise.all([
+    loadEmployeeFile({ orgId: actor.orgId, employeeId: id }),
+    getOrgSettings(actor.orgId),
+  ]);
   if (!file) notFound();
 
   const { employee, balances, ledger, entries, assignments, policies } = file;
@@ -98,6 +102,7 @@ export default async function AdminEmployeeFilePage({
               code: row.code,
               name: row.name,
             }))}
+            appReadonly={settings.appReadonly}
           />
         </div>
       </section>
@@ -105,7 +110,11 @@ export default async function AdminEmployeeFilePage({
       <section>
         <h2 className="text-lg font-medium">Assign policy</h2>
         <div className="mt-3">
-          <AssignPolicyForm employeeId={employee.id} policies={policies} />
+          <AssignPolicyForm
+            employeeId={employee.id}
+            policies={policies}
+            appReadonly={settings.appReadonly}
+          />
         </div>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
@@ -224,7 +233,11 @@ export default async function AdminEmployeeFilePage({
                     <td className="py-2 pr-4">{entry.status}</td>
                     <td className="py-2 pr-4 font-mono">{minutesToHours(entry.totalMinutes)}</td>
                     <td className="py-2">
-                      <DecideEntryForm employeeId={employee.id} entry={entry} />
+                      <DecideEntryForm
+                        employeeId={employee.id}
+                        entry={entry}
+                        appReadonly={settings.appReadonly}
+                      />
                     </td>
                   </tr>
                 ))

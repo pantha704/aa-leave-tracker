@@ -33,9 +33,11 @@ function FormAlert({ state }: { state: AdminFormState }) {
 export function AdjustHoursForm({
   employeeId,
   leaveTypes,
+  appReadonly = false,
 }: {
   employeeId: string;
   leaveTypes: Array<{ id: string; code: string; name: string }>;
+  appReadonly?: boolean;
 }) {
   const [state, action, pending] = useActionState(adjustHoursAction, undefined);
   return (
@@ -64,8 +66,8 @@ export function AdjustHoursForm({
         <input className={fieldClass} name="reason" required />
       </label>
       <div className="flex items-end gap-3">
-        <button className={buttonClass} type="submit" disabled={pending}>
-          Adjust hours
+        <button className={buttonClass} type="submit" disabled={pending || appReadonly}>
+          {appReadonly ? "App is frozen" : "Adjust hours"}
         </button>
         <FormAlert state={state} />
       </div>
@@ -76,9 +78,11 @@ export function AdjustHoursForm({
 export function AssignPolicyForm({
   employeeId,
   policies,
+  appReadonly = false,
 }: {
   employeeId: string;
   policies: PolicyOption[];
+  appReadonly?: boolean;
 }) {
   const [state, action, pending] = useActionState(assignPolicyAction, undefined);
   return (
@@ -103,8 +107,12 @@ export function AssignPolicyForm({
         <input className={fieldClass} name="validTo" type="date" />
       </label>
       <div className="flex items-end gap-3">
-        <button className={buttonClass} type="submit" disabled={pending || policies.length === 0}>
-          Assign policy
+        <button
+          className={buttonClass}
+          type="submit"
+          disabled={pending || appReadonly || policies.length === 0}
+        >
+          {appReadonly ? "App is frozen" : "Assign policy"}
         </button>
         <FormAlert state={state} />
       </div>
@@ -115,9 +123,11 @@ export function AssignPolicyForm({
 export function DecideEntryForm({
   entry,
   employeeId,
+  appReadonly = false,
 }: {
   entry: Pick<FileLeaveEntry, "id" | "status">;
   employeeId: string;
+  appReadonly?: boolean;
 }) {
   const [state, action, pending] = useActionState(decideEntryAction, undefined);
   const canDecidePending = entry.status === "pending";
@@ -139,7 +149,13 @@ export function DecideEntryForm({
             <input type="checkbox" name="override" />
             Override
           </label>
-          <button className={buttonClass} name="action" value="approve" type="submit" disabled={pending}>
+          <button
+            className={buttonClass}
+            name="action"
+            value="approve"
+            type="submit"
+            disabled={pending || appReadonly}
+          >
             Approve
           </button>
           <button
@@ -147,7 +163,7 @@ export function DecideEntryForm({
             name="action"
             value="reject"
             type="submit"
-            disabled={pending}
+            disabled={pending || appReadonly}
           >
             Reject
           </button>
@@ -156,7 +172,7 @@ export function DecideEntryForm({
             name="action"
             value="cancel"
             type="submit"
-            disabled={pending}
+            disabled={pending || appReadonly}
           >
             Cancel
           </button>
@@ -168,7 +184,7 @@ export function DecideEntryForm({
           name="action"
           value="cancel"
           type="submit"
-          disabled={pending}
+          disabled={pending || appReadonly}
         >
           Cancel
         </button>

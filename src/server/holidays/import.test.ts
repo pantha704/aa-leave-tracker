@@ -30,7 +30,7 @@ describe("holiday import uniqueness", () => {
     );
     expect(applied).toBe(0);
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (!result.ok && "errorCsv" in result) {
       expect(result.errorCsv).toContain("invalid date: bad");
     }
   });
@@ -75,7 +75,7 @@ describe("holiday import uniqueness", () => {
       { writeAudit: noopAudit },
     );
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (!result.ok && "errorCsv" in result) {
       expect(result.errors).toEqual([{ line: 2, message: "duplicate (org, date, region)" }]);
       expect(result.errorCsv).toContain("duplicate (org, date, region)");
     }
@@ -102,5 +102,23 @@ describe("holiday import uniqueness", () => {
       { mode: "upsert", writeAudit: noopAudit },
     );
     expect(result).toMatchObject({ ok: true, imported: 0, updated: 1 });
+  });
+
+  it("returns 423 when the app is readonly", async () => {
+    let applied = 0;
+    const result = await importHolidayCsv(
+      "org-1",
+      ["date,name", "2026-01-01,A"].join("\n"),
+      {
+        apply: async () => {
+          applied += 1;
+          return { ok: true, imported: 1, updated: 0, holidays: [] };
+        },
+        isAppReadonly: async () => true,
+      },
+      { writeAudit: noopAudit },
+    );
+    expect(applied).toBe(0);
+    expect(result).toMatchObject({ ok: false, status: 423, code: "APP_READONLY" });
   });
 });

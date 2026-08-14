@@ -4,6 +4,7 @@ import { formatUnitPair } from "@/lib/hours";
 import { requireEmployee } from "@/server/auth";
 import type { EmployeeRole } from "@/server/auth-gate";
 import { loadMyLeavePage } from "@/server/me";
+import { getOrgSettings } from "@/server/settings";
 
 const BUCKETS = [
   ["Granted", "grantedMinutes"],
@@ -35,7 +36,10 @@ function UnitAmount({
 export default async function MePage() {
   const { employee } = await requireEmployee();
   const actor = { id: employee.id, role: employee.role as EmployeeRole };
-  const page = await loadMyLeavePage(actor);
+  const [page, settings] = await Promise.all([
+    loadMyLeavePage(actor),
+    getOrgSettings(employee.orgId),
+  ]);
   const asOf = page.balances[0]?.balance.asOf ?? page.today;
 
   return (
@@ -109,6 +113,7 @@ export default async function MePage() {
             weekendDays={page.weekendDays}
             workdayMinutes={page.workdayMinutes}
             today={page.today}
+            appReadonly={settings.appReadonly}
           />
         </div>
       </section>
@@ -157,7 +162,9 @@ export default async function MePage() {
                       {row.note ?? ""}
                     </td>
                     <td className="py-1">
-                      {row.canCancel ? <CancelEntryButton entryId={row.id} /> : null}
+                      {row.canCancel ? (
+                        <CancelEntryButton entryId={row.id} appReadonly={settings.appReadonly} />
+                      ) : null}
                     </td>
                   </tr>
                 ))

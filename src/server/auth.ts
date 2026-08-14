@@ -15,6 +15,7 @@ import {
   type EmployeeAccess,
   type EmployeeRole,
 } from "./auth-gate";
+import type { AuthzActor } from "./authz";
 import { getDatabaseUrl, getDb } from "./db";
 
 export {
@@ -142,6 +143,20 @@ export async function getRequestActor(request: NextRequest): Promise<Actor> {
     kind: "authenticated",
     role: employee.role as EmployeeRole,
     mustChangePassword: employee.mustChangePassword,
+  };
+}
+
+export async function getAuthzActor(request: NextRequest): Promise<AuthzActor | null> {
+  const session = await getAuth().api.getSession({ headers: request.headers });
+  if (!session?.user?.email) return null;
+
+  const employee = await findEmployeeByUser(session.user);
+  if (!employee?.active) return null;
+  if (mustChangePasswordNow(toAccess(employee))) return null;
+
+  return {
+    id: employee.id,
+    role: employee.role as EmployeeRole,
   };
 }
 

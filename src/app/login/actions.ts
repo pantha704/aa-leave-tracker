@@ -39,6 +39,7 @@ export async function signInAction(
 
   const employee = await findEmployeeByUser(user);
   if (!employee?.active) {
+    await getAuth().api.signOut({ headers: await headers() });
     return { error: "No employee record for this account" };
   }
 

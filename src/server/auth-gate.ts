@@ -10,6 +10,18 @@ export type Actor =
       mustChangePassword: boolean;
     };
 
+export type EmployeeAccess = {
+  role: EmployeeRole;
+  mustChangePassword: boolean;
+  active: boolean;
+};
+
+export type AdminDecision =
+  | { status: "ok" }
+  | { status: "unauthenticated" }
+  | { status: "must_change_password" }
+  | { status: "forbidden" };
+
 export function homeForRole(role: EmployeeRole): string {
   return role === "admin" ? "/admin" : "/me";
 }
@@ -28,6 +40,24 @@ function isHealthPath(pathname: string): boolean {
 
 function isAuthApiPath(pathname: string): boolean {
   return pathname === "/api/auth" || pathname.startsWith("/api/auth/");
+}
+
+/** Page/DAL authorization. Employees must get 403, not 404 or a login bounce. */
+export function authorizeAdmin(employee: EmployeeAccess | null | undefined): AdminDecision {
+  if (!employee?.active) {
+    return { status: "unauthenticated" };
+  }
+  if (employee.mustChangePassword) {
+    return { status: "must_change_password" };
+  }
+  if (employee.role !== "admin") {
+    return { status: "forbidden" };
+  }
+  return { status: "ok" };
+}
+
+export function mustChangePasswordNow(employee: EmployeeAccess | null | undefined): boolean {
+  return Boolean(employee?.active && employee.mustChangePassword);
 }
 
 export function applyAuthGate(request: NextRequest, actor: Actor): NextResponse {

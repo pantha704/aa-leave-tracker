@@ -1,23 +1,49 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { getSessionCookie } from "better-auth/cookies";
 import { nextCookies } from "better-auth/next-js";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { forbidden, redirect } from "next/navigation";
 import { NextRequest } from "next/server";
 import * as authSchema from "@/db/auth-schema";
 import { employees } from "@/db/schema";
-import { type Actor, type EmployeeRole } from "./auth-gate";
+import {
+  authorizeAdmin,
+  mustChangePasswordNow,
+  type Actor,
+  type EmployeeAccess,
+  type EmployeeRole,
+} from "./auth-gate";
 import { getDatabaseUrl, getDb } from "./db";
 
 export {
   applyAuthGate,
+  authorizeAdmin,
   homeForRole,
   isAdminPath,
   isMePath,
+  mustChangePasswordNow,
   type Actor,
+  type AdminDecision,
+  type EmployeeAccess,
   type EmployeeRole,
 } from "./auth-gate";
+
+export const emailAndPasswordConfig = {
+  enabled: true,
+  disableSignUp: true,
+} as const;
+
+export function sessionCookieAttributes(
+  env: Partial<Record<string, string | undefined>> = process.env,
+) {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: env.NODE_ENV === "production",
+  };
+}
 
 export function requireBetterAuthSecret(
   env: Partial<Record<string, string | undefined>> = process.env,
@@ -43,9 +69,9 @@ function createAuth() {
       provider: "pg",
       schema: authSchema,
     }),
-    emailAndPassword: {
-      enabled: true,
-      disableSignUp: true,
+    emailAndPassword: emailAndPasswordConfig,
+    advanced: {
+      defaultCookieAttributes: sessionCookieAttributes(),
     },
     plugins: [nextCookies()],
   });
@@ -60,6 +86,18 @@ export function getAuth(): AuthInstance {
     authInstance = createAuth();
   }
   return authInstance;
+}
+
+function toAccess(employee: {
+  role: string;
+  mustChangePassword: boolean;
+  active: boolean;
+}): EmployeeAccess {
+  return {
+    role: employee.role as EmployeeRole,
+    mustChangePassword: employee.mustChangePassword,
+    active: employee.active,
+  };
 }
 
 export async function findEmployeeByUser(user: { id: string; email: string }) {
@@ -107,6 +145,19 @@ export async function getRequestActor(request: NextRequest): Promise<Actor> {
   };
 }
 
+export async function requireNotMustChangePassword() {
+  const sessionCookie = getSessionCookie(await headers());
+  if (!sessionCookie) return;
+
+  const session = await getAuth().api.getSession({ headers: await headers() });
+  if (!session?.user) return;
+
+  const employee = await findEmployeeByUser(session.user);
+  if (mustChangePasswordNow(employee ? toAccess(employee) : null)) {
+    redirect("/login/change-password");
+  }
+}
+
 export async function requireEmployee() {
   const session = await getAuth().api.getSession({ headers: await headers() });
   if (!session?.user) {
@@ -118,7 +169,7 @@ export async function requireEmployee() {
     redirect("/login");
   }
 
-  if (employee.mustChangePassword) {
+  if (mustChangePasswordNow(toAccess(employee))) {
     redirect("/login/change-password");
   }
 
@@ -126,9 +177,22 @@ export async function requireEmployee() {
 }
 
 export async function requireAdmin() {
-  const ctx = await requireEmployee();
-  if (ctx.employee.role !== "admin") {
+  const session = await getAuth().api.getSession({ headers: await headers() });
+  if (!session?.user) {
     redirect("/login");
   }
-  return ctx;
+
+  const employee = await findEmployeeByUser(session.user);
+  const decision = authorizeAdmin(employee ? toAccess(employee) : null);
+  if (decision.status === "unauthenticated") {
+    redirect("/login");
+  }
+  if (decision.status === "must_change_password") {
+    redirect("/login/change-password");
+  }
+  if (decision.status === "forbidden") {
+    forbidden();
+  }
+
+  return { session, employee: employee! };
 }

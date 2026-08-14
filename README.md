@@ -57,6 +57,8 @@ Email + password via Better Auth. There is no public registration endpoint.
 - Seed creates the admin employee and a credential. `SEED_ADMIN_PASSWORD` is required.
 - First admin login is forced through `/login/change-password`.
 - After login: admin → `/admin`, employee → `/me`.
-- Employees who `GET /admin` receive **403** (not 404).
+- Employees who `GET /admin` receive **403** (not 404) from both the proxy and `authorizeAdmin` / `requireAdmin`.
+- Session cookies are `httpOnly`, `SameSite=Lax`, and `Secure` when `NODE_ENV=production`.
+- In production set `BETTER_AUTH_URL` to an `https://` origin.
 
 Do not commit `.env`.

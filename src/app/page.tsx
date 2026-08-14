@@ -1,4 +1,8 @@
-export default function Home() {
+import { requireNotMustChangePassword } from "@/server/auth";
+
+export default async function Home() {
+  await requireNotMustChangePassword();
+
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6">
       <main className="text-center">

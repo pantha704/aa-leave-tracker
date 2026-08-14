@@ -7,7 +7,7 @@ import {
   DEMO_VACATION_TAKE_CEILING_MINUTES,
   DEMO_WORKDAY_MINUTES,
 } from "./demo-policy";
-import { requireSeedAdminPassword, requireSeedTimezone } from "./seed";
+import { normalizeSeedAdminEmail, requireSeedAdminPassword, requireSeedTimezone } from "./seed";
 import {
   auditEvents,
   blackoutDates,
@@ -130,6 +130,14 @@ describe("normative schema", () => {
       /at least 8 characters/,
     );
     expect(requireSeedAdminPassword({ SEED_ADMIN_PASSWORD: "long-enough" })).toBe("long-enough");
+  });
+
+  it("stores seed admin email in lowercase", () => {
+    expect(normalizeSeedAdminEmail("Admin@AbsoluteAddiction.local", "x@y.z")).toBe(
+      "admin@absoluteaddiction.local",
+    );
+    expect(normalizeSeedAdminEmail("  a@b.C  ", "x@y.z")).toBe("a@b.c");
+    expect(normalizeSeedAdminEmail(undefined, "Admin@X.local")).toBe("admin@x.local");
   });
 
   it("adds must_change_password and auth_user_id on employees", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
-import { applyAuthGate } from "./auth-gate";
+import { applyAuthGate, authorizeAdmin, mustChangePasswordNow } from "./auth-gate";
 
 function get(path: string) {
   return new NextRequest(new URL(path, "http://localhost"));
@@ -50,5 +50,54 @@ describe("auth gate", () => {
     expect(res.status).toBeLessThan(400);
     expect(res.headers.get("location")).toMatch(/\/login\/change-password$/);
     expect(applyAuthGate(get("/login/change-password"), actor).status).toBe(200);
+  });
+});
+
+describe("DAL authorizeAdmin", () => {
+  it("employee cannot GET /admin (403)", () => {
+    expect(
+      authorizeAdmin({
+        role: "employee",
+        mustChangePassword: false,
+        active: true,
+      }),
+    ).toEqual({ status: "forbidden" });
+  });
+
+  it("manager cannot GET /admin (403)", () => {
+    expect(
+      authorizeAdmin({
+        role: "manager",
+        mustChangePassword: false,
+        active: true,
+      }),
+    ).toEqual({ status: "forbidden" });
+  });
+
+  it("admin is allowed on /admin", () => {
+    expect(
+      authorizeAdmin({
+        role: "admin",
+        mustChangePassword: false,
+        active: true,
+      }),
+    ).toEqual({ status: "ok" });
+  });
+
+  it("mustChangePassword blocks other pages at the DAL", () => {
+    expect(
+      mustChangePasswordNow({
+        role: "admin",
+        mustChangePassword: true,
+        active: true,
+      }),
+    ).toBe(true);
+    expect(
+      authorizeAdmin({
+        role: "admin",
+        mustChangePassword: true,
+        active: true,
+      }),
+    ).toEqual({ status: "must_change_password" });
   });
 });

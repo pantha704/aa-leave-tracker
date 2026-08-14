@@ -35,6 +35,11 @@ export function requireSeedTimezone(env: SeedEnv = process.env): string {
   return timezone;
 }
 
+export function normalizeSeedAdminEmail(raw: string | undefined, fallback: string): string {
+  const email = (raw?.trim() || fallback).toLowerCase();
+  return email;
+}
+
 export function requireSeedAdminPassword(env: SeedEnv = process.env): string {
   const password = env.SEED_ADMIN_PASSWORD;
   if (!password || password.length === 0) {
@@ -69,7 +74,7 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
     throw new Error("DATABASE_URL is required to seed");
   }
 
-  const adminEmail = env.SEED_ADMIN_EMAIL?.trim() || DEMO_DEFAULT_ADMIN_EMAIL;
+  const adminEmail = normalizeSeedAdminEmail(env.SEED_ADMIN_EMAIL, DEMO_DEFAULT_ADMIN_EMAIL);
   const passwordHash = await hashPassword(adminPassword);
   const today = todayInTimeZone(timezone);
   const year = calendarYearInTimeZone(timezone);

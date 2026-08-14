@@ -23,6 +23,7 @@ export {
   authorizeAdmin,
   homeForRole,
   isAdminPath,
+  isCalendarPath,
   isMePath,
   mustChangePasswordNow,
   type Actor,

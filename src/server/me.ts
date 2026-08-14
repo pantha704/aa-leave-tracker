@@ -1,14 +1,19 @@
 import { desc, eq } from "drizzle-orm";
+import { resolveMeEmployeeId } from "@/lib/leave-fields";
+import { withRunningRemaining } from "@/lib/ledger-remaining";
 import {
   employees,
   leaveEntries,
   leaveTypes,
   ledgerEntries,
   organizations,
+  policies,
   policyAssignments,
+  policyPeriods,
 } from "@/db/schema";
 import { loadOrgHolidays } from "@/server/holidays/import";
 import { asOfDateString, getBalance, type Balance } from "@/server/ledger/balance";
+import { canCancelEntry, type AuthzActor } from "@/server/authz";
 import { getDb } from "@/server/db";
 
 export type MyLeaveType = {
@@ -18,6 +23,9 @@ export type MyLeaveType = {
   consumesBalance: boolean;
   unlimited: boolean;
   legalUnit: string;
+  minIncrementMinutes: number | null;
+  negativeAllowed: boolean;
+  negativeFloorMinutes: number | null;
 };
 
 export type MyBalanceRow = MyLeaveType & {
@@ -34,6 +42,8 @@ export type MyLedgerRow = {
   periodYear: number;
   reversedAt: Date | null;
   reason: string | null;
+  createdAt: Date;
+  remainingMinutes: number | null;
 };
 
 export type MyEntryRow = {
@@ -47,6 +57,7 @@ export type MyEntryRow = {
   portion: string;
   totalMinutes: number;
   note: string | null;
+  canCancel: boolean;
 };
 
 export type MyLeavePage = {
@@ -61,7 +72,12 @@ export type MyLeavePage = {
   entries: MyEntryRow[];
 };
 
-export async function loadMyLeavePage(employeeId: string): Promise<MyLeavePage> {
+export async function loadMyLeavePage(actor: AuthzActor | null): Promise<MyLeavePage> {
+  const resolved = resolveMeEmployeeId(actor);
+  if (!resolved.ok) {
+    throw new Error(resolved.code);
+  }
+  const employeeId = resolved.employeeId;
   const db = getDb();
   const empRows = await db
     .select({
@@ -82,7 +98,7 @@ export async function loadMyLeavePage(employeeId: string): Promise<MyLeavePage> 
     throw new Error(`employee not found: ${employeeId}`);
   }
 
-  const [assigned, orgTypes, holidayRows, ledgerRows, entryRows] = await Promise.all([
+  const [assigned, orgTypes, holidayRows, ledgerRows, entryRows, periodRows] = await Promise.all([
     db
       .select({
         id: leaveTypes.id,
@@ -91,9 +107,13 @@ export async function loadMyLeavePage(employeeId: string): Promise<MyLeavePage> 
         consumesBalance: leaveTypes.consumesBalance,
         unlimited: leaveTypes.unlimited,
         legalUnit: leaveTypes.legalUnit,
+        minIncrementMinutes: policies.minIncrementMinutes,
+        negativeAllowed: policies.negativeAllowed,
+        negativeFloorMinutes: policies.negativeFloorMinutes,
       })
       .from(policyAssignments)
       .innerJoin(leaveTypes, eq(policyAssignments.leaveTypeId, leaveTypes.id))
+      .innerJoin(policies, eq(policyAssignments.policyId, policies.id))
       .where(eq(policyAssignments.employeeId, employeeId))
       .orderBy(leaveTypes.code),
     db
@@ -118,6 +138,7 @@ export async function loadMyLeavePage(employeeId: string): Promise<MyLeavePage> 
         periodYear: ledgerEntries.periodYear,
         reversedAt: ledgerEntries.reversedAt,
         reason: ledgerEntries.reason,
+        createdAt: ledgerEntries.createdAt,
       })
       .from(ledgerEntries)
       .where(eq(ledgerEntries.employeeId, employeeId))
@@ -133,25 +154,45 @@ export async function loadMyLeavePage(employeeId: string): Promise<MyLeavePage> 
         portion: leaveEntries.portion,
         totalMinutes: leaveEntries.totalMinutes,
         note: leaveEntries.note,
+        immutableAt: leaveEntries.immutableAt,
       })
       .from(leaveEntries)
       .where(eq(leaveEntries.employeeId, employeeId))
       .orderBy(desc(leaveEntries.startDate), desc(leaveEntries.createdAt)),
+    db
+      .select({ year: policyPeriods.year, status: policyPeriods.status })
+      .from(policyPeriods)
+      .where(eq(policyPeriods.orgId, emp.orgId)),
   ]);
 
   const typeById = new Map(orgTypes.map((type) => [type.id, type]));
   const today = asOfDateString(new Date(), emp.timezone);
   const workdayMinutes = emp.workdayMinutes ?? emp.orgWorkdayMinutes;
+  const periodYear = Number(today.slice(0, 4));
+  const byYear = new Map(periodRows.map((row) => [row.year, row.status]));
 
+  const assignedById = new Map(assigned.map((type) => [type.id, type]));
   const stripIds = new Set<string>([
     ...assigned.map((type) => type.id),
     ...ledgerRows.map((row) => row.leaveTypeId),
   ]);
 
   const balances: MyBalanceRow[] = [];
-  for (const type of [...assigned, ...orgTypes.filter((type) => stripIds.has(type.id))]) {
-    if (balances.some((row) => row.id === type.id)) continue;
-    if (!stripIds.has(type.id)) continue;
+  for (const id of stripIds) {
+    const assignedType = assignedById.get(id);
+    const orgType = typeById.get(id);
+    if (!assignedType && !orgType) continue;
+    const type: MyLeaveType = assignedType ?? {
+      id,
+      code: orgType!.code,
+      name: orgType!.name,
+      consumesBalance: orgType!.consumesBalance,
+      unlimited: orgType!.unlimited,
+      legalUnit: orgType!.legalUnit,
+      minIncrementMinutes: null,
+      negativeAllowed: false,
+      negativeFloorMinutes: null,
+    };
     const balance = await getBalance(db, {
       employeeId,
       leaveTypeId: type.id,
@@ -161,6 +202,14 @@ export async function loadMyLeavePage(employeeId: string): Promise<MyLeavePage> 
     balances.push({ ...type, balance });
   }
 
+  const ledger = withRunningRemaining(
+    ledgerRows.map((row) => ({
+      ...row,
+      leaveTypeName: typeById.get(row.leaveTypeId)?.name ?? row.leaveTypeId,
+    })),
+    periodYear,
+  );
+
   return {
     employeeName: emp.name,
     today,
@@ -169,13 +218,32 @@ export async function loadMyLeavePage(employeeId: string): Promise<MyLeavePage> 
     holidays: holidayRows.map((row) => row.onDate),
     types: assigned,
     balances,
-    ledger: ledgerRows.map((row) => ({
-      ...row,
-      leaveTypeName: typeById.get(row.leaveTypeId)?.name ?? row.leaveTypeId,
-    })),
-    entries: entryRows.map((row) => ({
-      ...row,
-      leaveTypeName: typeById.get(row.leaveTypeId)?.name ?? row.leaveTypeId,
-    })),
+    ledger,
+    entries: entryRows.map((row) => {
+      const years = new Set([Number(row.startDate.slice(0, 4)), Number(row.endDate.slice(0, 4))]);
+      const open = [...years].every((year) => byYear.get(year) === "open");
+      return {
+        id: row.id,
+        leaveTypeId: row.leaveTypeId,
+        leaveTypeName: typeById.get(row.leaveTypeId)?.name ?? row.leaveTypeId,
+        intent: row.intent,
+        status: row.status,
+        startDate: row.startDate,
+        endDate: row.endDate,
+        portion: row.portion,
+        totalMinutes: row.totalMinutes,
+        note: row.note,
+        canCancel: canCancelEntry(
+          actor,
+          {
+            employeeId,
+            status: row.status,
+            immutableAt: row.immutableAt,
+            startDate: row.startDate,
+          },
+          { open, today },
+        ),
+      };
+    }),
   };
 }

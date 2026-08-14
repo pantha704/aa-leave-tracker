@@ -1,9 +1,10 @@
+import { hoursToMinutes } from "@/lib/hours";
 import { expandLeaveDays } from "@/server/policy/days";
+import { customPortion } from "@/server/policy/rules/min-increment";
+import { negativeBalance } from "@/server/policy/rules/negative-balance";
 import type { Portion } from "@/server/policy/types";
-import { hoursToMinutes } from "./hours";
 
-const DECIMAL_HOURS = /^-?\d+(\.\d+)?$/;
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const POSITIVE_HOURS = /^\d+(\.\d+)?$/;
 
 export type LeavePreviewInput = {
   startDate: string;
@@ -17,6 +18,9 @@ export type LeavePreviewInput = {
   weekendDays: readonly number[];
   workdayMinutes: number;
   today: string;
+  incrementMinutes?: number | null;
+  negativeAllowed?: boolean;
+  negativeFloorMinutes?: number | null;
 };
 
 export type LeavePreview =
@@ -25,13 +29,17 @@ export type LeavePreview =
       intent: "log" | "request";
       thisMinutes: number;
       availableMinutes: number;
-      availableAfterMinutes: number;
-      dayCount: number;
+      availableAfterMinutes: number | null;
+      otherPeriodYear: boolean;
     }
   | { ok: false; code: string; message: string };
 
+function apiCode(code: string): string {
+  return code.toUpperCase();
+}
+
 export function previewLeave(input: LeavePreviewInput): LeavePreview {
-  if (!ISO_DATE.test(input.startDate) || !ISO_DATE.test(input.endDate)) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(input.endDate)) {
     return { ok: false, code: "INVALID_DATES", message: "Choose a start and end date." };
   }
   if (input.endDate < input.startDate) {
@@ -48,14 +56,21 @@ export function previewLeave(input: LeavePreviewInput): LeavePreview {
   let customMinutes: number | null = null;
   if (input.portion === "custom") {
     const raw = (input.customHours ?? "").trim();
-    if (!raw || !DECIMAL_HOURS.test(raw) || !Number.isFinite(Number(raw))) {
+    if (!raw || !POSITIVE_HOURS.test(raw) || !Number.isFinite(Number(raw)) || Number(raw) <= 0) {
       return {
         ok: false,
         code: "INVALID_CUSTOM_HOURS",
-        message: "customHours must be a decimal string",
+        message: "customHours must be a positive decimal string",
       };
     }
     customMinutes = hoursToMinutes(raw);
+    const custom = customPortion({
+      portion: input.portion,
+      customMinutes,
+      workdayMinutes: input.workdayMinutes,
+      incrementMinutes: input.incrementMinutes,
+    });
+    if (custom) return { ok: false, code: apiCode(custom.code), message: custom.message };
   }
 
   let days: ReturnType<typeof expandLeaveDays>;
@@ -80,9 +95,30 @@ export function previewLeave(input: LeavePreviewInput): LeavePreview {
   }
 
   const thisMinutes = days.reduce((sum, day) => sum + day.minutes, 0);
-  const availableAfterMinutes = input.unlimited
-    ? input.availableMinutes
-    : input.availableMinutes - (input.consumesBalance ? thisMinutes : 0);
+  const asOfYear = Number(input.today.slice(0, 4));
+  const otherPeriodYear = days.some((day) => Number(day.onDate.slice(0, 4)) !== asOfYear);
+
+  const negative = negativeBalance({
+    balance: {
+      takenMinutes: 0,
+      scheduledMinutes: 0,
+      requestedMinutes: 0,
+      availableMinutes: input.availableMinutes,
+    },
+    thisMinutes,
+    negativeAllowed: input.negativeAllowed ?? false,
+    negativeFloorMinutes: input.negativeFloorMinutes,
+    consumesBalance: input.consumesBalance,
+    unlimited: input.unlimited,
+  });
+  if (negative && !otherPeriodYear) {
+    return { ok: false, code: apiCode(negative.code), message: negative.message };
+  }
+
+  const availableAfterMinutes =
+    input.unlimited || otherPeriodYear
+      ? null
+      : input.availableMinutes - (input.consumesBalance ? thisMinutes : 0);
 
   return {
     ok: true,
@@ -90,6 +126,6 @@ export function previewLeave(input: LeavePreviewInput): LeavePreview {
     thisMinutes,
     availableMinutes: input.availableMinutes,
     availableAfterMinutes,
-    dayCount: days.length,
+    otherPeriodYear,
   };
 }

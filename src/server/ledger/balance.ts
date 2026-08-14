@@ -1,6 +1,9 @@
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { employees, leaveDays, leaveEntries, ledgerEntries, organizations } from "@/db/schema";
+import { ISO_DATE, addIsoDays, inclusiveIsoDates, requireIsoDate } from "@/lib/iso-date";
+
+export { ISO_DATE, addIsoDays, inclusiveIsoDates, requireIsoDate };
 
 /** Credits that make up grantedMinutes. Adjustment is NET (negatives included). */
 export const GRANTED_KINDS = ["grant_lump", "accrual", "carryover", "adjustment"] as const;
@@ -46,34 +49,6 @@ export type PendingEntrySumRow = {
 };
 
 export type LedgerDb = PostgresJsDatabase<Record<string, unknown>>;
-
-const ISO_DATE = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
-
-export function requireIsoDate(value: string, label = "date"): string {
-  if (!ISO_DATE.test(value)) {
-    throw new Error(`${label} must be YYYY-MM-DD`);
-  }
-  return value;
-}
-
-export function addIsoDays(isoDate: string, days: number): string {
-  const [, year, month, day] = requireIsoDate(isoDate).match(ISO_DATE)!;
-  const utc = Date.UTC(Number(year), Number(month) - 1, Number(day) + days);
-  return new Date(utc).toISOString().slice(0, 10);
-}
-
-export function inclusiveIsoDates(startDate: string, endDate: string): string[] {
-  const start = requireIsoDate(startDate, "startDate");
-  const end = requireIsoDate(endDate, "endDate");
-  if (end < start) {
-    throw new Error("endDate must be on or after startDate");
-  }
-  const dates: string[] = [];
-  for (let cursor = start; cursor <= end; cursor = addIsoDays(cursor, 1)) {
-    dates.push(cursor);
-  }
-  return dates;
-}
 
 export function allocateMinutesAcrossDays(dates: readonly string[], totalMinutes: number): PendingDayMinutes[] {
   if (!Number.isInteger(totalMinutes)) {

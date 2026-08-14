@@ -13,6 +13,7 @@ import {
   policyAssignments,
   policyPeriods,
 } from "@/db/schema";
+import { hoursToMinutes } from "@/lib/hours";
 import { tryWriteAudit, writeAuditEvent, type AuditWriter } from "@/server/audit";
 import { canAdmin, canReadEmployee, type AuthzActor } from "@/server/authz";
 import {
@@ -210,10 +211,7 @@ export function toApiCode(code: string): string {
   return code.toUpperCase();
 }
 
-/** Hours stay at the API boundary; ledger and days are integer minutes. */
-export function hoursToMinutes(hours: string): number {
-  return Math.round(Number(hours) * 60);
-}
+export { hoursToMinutes };
 
 export function parseCustomHours(hours: unknown):
   | { ok: true; minutes: number }

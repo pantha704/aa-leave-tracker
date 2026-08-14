@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { requireEmployee } from "@/server/auth";
 import type { EmployeeRole } from "@/server/auth-gate";
 import { formatHours } from "@/lib/hours";
-import { leaveFieldsFromForm } from "@/lib/leave-fields";
+import { ownSubmitPayload } from "@/lib/leave-fields";
+import { decideLeave } from "@/server/leave/decide";
 import { submitLeave } from "@/server/leave/submit";
 import type { Intent, Portion } from "@/server/policy/types";
 
@@ -20,7 +21,8 @@ export async function submitLeaveAction(
   formData: FormData,
 ): Promise<LeaveFormState> {
   const { employee } = await requireEmployee();
-  const fields = leaveFieldsFromForm(formData);
+  const actor = { id: employee.id, role: employee.role as EmployeeRole };
+  const fields = ownSubmitPayload(actor, formData);
 
   if (!fields.leaveTypeId) {
     return { ok: false, code: "INVALID_LEAVE_TYPE", message: "Choose a leave type." };
@@ -30,14 +32,43 @@ export async function submitLeaveAction(
   }
 
   const result = await submitLeave({
-    actor: { id: employee.id, role: employee.role as EmployeeRole },
-    employeeId: employee.id,
+    actor,
+    employeeId: fields.employeeId,
     leaveTypeId: fields.leaveTypeId,
     startDate: fields.startDate,
     endDate: fields.endDate,
     portion: fields.portion as Portion,
     customHours: fields.portion === "custom" ? fields.customHours : null,
     note: fields.note,
+  });
+
+  if (!result.ok) {
+    return { ok: false, code: result.code, message: result.message };
+  }
+
+  revalidatePath("/me");
+  return {
+    ok: true,
+    intent: result.intent,
+    status: result.entry.status,
+    hours: formatHours(result.entry.totalMinutes),
+  };
+}
+
+export async function cancelLeaveAction(
+  _prev: LeaveFormState,
+  formData: FormData,
+): Promise<LeaveFormState> {
+  const { employee } = await requireEmployee();
+  const entryId = String(formData.get("id") ?? "").trim();
+  if (!entryId) {
+    return { ok: false, code: "NOT_FOUND", message: "leave entry not found" };
+  }
+
+  const result = await decideLeave({
+    actor: { id: employee.id, role: employee.role as EmployeeRole },
+    entryId,
+    action: "cancel",
   });
 
   if (!result.ok) {

@@ -1,4 +1,4 @@
-import { inclusiveIsoDates, requireIsoDate } from "@/server/ledger/balance";
+import { inclusiveIsoDates, requireIsoDate } from "@/lib/iso-date";
 import type { ExpandedDay, HolidayDate, Portion, ProposedLeave } from "./types";
 
 export const DEFAULT_WEEKEND_DAYS = [6, 7] as const;

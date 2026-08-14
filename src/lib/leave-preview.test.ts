@@ -24,7 +24,7 @@ describe("previewLeave", () => {
       thisMinutes: 480,
       availableMinutes: 1360,
       availableAfterMinutes: 880,
-      dayCount: 1,
+      otherPeriodYear: false,
     });
   });
 
@@ -53,10 +53,10 @@ describe("previewLeave", () => {
       endDate: "2026-07-08",
       portion: "custom",
       customHours: "2.67",
+      incrementMinutes: null,
     });
     expect(preview.ok).toBe(true);
     if (!preview.ok) return;
-    expect(preview.dayCount).toBe(3);
     expect(preview.thisMinutes).toBe(480);
   });
 
@@ -64,5 +64,40 @@ describe("previewLeave", () => {
     expect(
       previewLeave({ ...base, portion: "custom", customHours: "two" }),
     ).toMatchObject({ ok: false, code: "INVALID_CUSTOM_HOURS" });
+  });
+
+  it("rejects negative, zero, over-workday, and off-increment custom hours", () => {
+    expect(previewLeave({ ...base, portion: "custom", customHours: "-1" })).toMatchObject({
+      ok: false,
+      code: "INVALID_CUSTOM_HOURS",
+    });
+    expect(previewLeave({ ...base, portion: "custom", customHours: "0" })).toMatchObject({
+      ok: false,
+      code: "INVALID_CUSTOM_HOURS",
+    });
+    expect(
+      previewLeave({ ...base, portion: "custom", customHours: "9", incrementMinutes: 60 }),
+    ).toMatchObject({ ok: false, code: "MIN_INCREMENT" });
+    expect(
+      previewLeave({ ...base, portion: "custom", customHours: "0.5", incrementMinutes: 60 }),
+    ).toMatchObject({ ok: false, code: "MIN_INCREMENT" });
+  });
+
+  it("surfaces NEGATIVE_BALANCE when available would go below the floor", () => {
+    expect(
+      previewLeave({ ...base, availableMinutes: 240, negativeAllowed: false }),
+    ).toMatchObject({ ok: false, code: "NEGATIVE_BALANCE" });
+  });
+
+  it("does not claim this-year available after for a next-year range", () => {
+    const preview = previewLeave({
+      ...base,
+      startDate: "2027-01-05",
+      endDate: "2027-01-05",
+    });
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) return;
+    expect(preview.otherPeriodYear).toBe(true);
+    expect(preview.availableAfterMinutes).toBeNull();
   });
 });

@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { submitLeaveAction, type LeaveFormState } from "@/app/me/actions";
-import { formatHours } from "@/lib/hours";
+import { formatDays, formatHours, formatUnitPair } from "@/lib/hours";
 import { previewLeave } from "@/lib/leave-preview";
 import type { Portion } from "@/server/policy/types";
 
@@ -18,6 +18,10 @@ export type LeaveFormType = {
   consumesBalance: boolean;
   unlimited: boolean;
   availableMinutes: number;
+  legalUnit: string;
+  minIncrementMinutes: number | null;
+  negativeAllowed: boolean;
+  negativeFloorMinutes: number | null;
 };
 
 export type LeaveFormProps = {
@@ -71,6 +75,9 @@ export function LeaveForm({ types, holidays, weekendDays, workdayMinutes, today 
       weekendDays,
       workdayMinutes,
       today,
+      incrementMinutes: selected.minIncrementMinutes,
+      negativeAllowed: selected.negativeAllowed,
+      negativeFloorMinutes: selected.negativeFloorMinutes,
     });
   }, [customHours, endDate, holidays, portion, selected, startDate, today, weekendDays, workdayMinutes]);
 
@@ -168,14 +175,19 @@ export function LeaveForm({ types, holidays, weekendDays, workdayMinutes, today 
         </label>
       </div>
 
-      <LeavePreview state={preview} unlimited={selected?.unlimited ?? false} />
+      <LeavePreview
+        state={preview}
+        unlimited={selected?.unlimited ?? false}
+        workdayMinutes={workdayMinutes}
+        legalUnit={selected?.legalUnit ?? "hours"}
+      />
       <FormResult state={state} />
 
       <button
         className={`${buttonClass} w-fit`}
         type="submit"
         tabIndex={7}
-        disabled={pending || types.length === 0}
+        disabled={pending || types.length === 0 || !preview.ok}
       >
         {pending ? "Submitting…" : "Submit"}
       </button>
@@ -183,12 +195,21 @@ export function LeaveForm({ types, holidays, weekendDays, workdayMinutes, today 
   );
 }
 
+function pairLabel(minutes: number, workdayMinutes: number, legalUnit: string): string {
+  const pair = formatUnitPair(minutes, workdayMinutes, legalUnit);
+  return `${pair.primary} (${pair.secondary})`;
+}
+
 function LeavePreview({
   state,
   unlimited,
+  workdayMinutes,
+  legalUnit,
 }: {
   state: ReturnType<typeof previewLeave>;
   unlimited: boolean;
+  workdayMinutes: number;
+  legalUnit: string;
 }) {
   if (!state.ok) {
     if (state.code === "INVALID_DATES" && state.message === "Choose a start and end date.") {
@@ -207,14 +228,29 @@ function LeavePreview({
     );
   }
 
+  const thisLabel = pairLabel(state.thisMinutes, workdayMinutes, legalUnit);
+  const availableLabel = unlimited
+    ? "unlimited"
+    : pairLabel(state.availableMinutes, workdayMinutes, legalUnit);
+  const afterLabel =
+    unlimited || state.availableAfterMinutes == null
+      ? null
+      : pairLabel(state.availableAfterMinutes, workdayMinutes, legalUnit);
+
   return (
     <p className="text-xs tabular-nums text-zinc-700 dark:text-zinc-300" aria-live="polite">
       Intent <span className="font-medium">{state.intent}</span>
       {" · this "}
-      {formatHours(state.thisMinutes)}h ({state.dayCount} day{state.dayCount === 1 ? "" : "s"})
+      {thisLabel}
       {" · available "}
-      {unlimited ? "unlimited" : `${formatHours(state.availableMinutes)}h`}
-      {unlimited ? null : ` → ${formatHours(state.availableAfterMinutes)}h after`}
+      {availableLabel}
+      {afterLabel ? ` → ${afterLabel} after` : null}
+      {state.otherPeriodYear ? (
+        <span className="block text-zinc-500">
+          After-hours is this year only; submit still checks {formatHours(state.thisMinutes)}h /{" "}
+          {formatDays(state.thisMinutes, workdayMinutes)}d against the period year of each day.
+        </span>
+      ) : null}
     </p>
   );
 }

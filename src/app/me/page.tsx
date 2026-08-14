@@ -1,6 +1,8 @@
+import { CancelEntryButton } from "@/components/cancel-entry-button";
 import { LeaveForm } from "@/components/leave-form";
-import { formatHours } from "@/lib/hours";
+import { formatUnitPair } from "@/lib/hours";
 import { requireEmployee } from "@/server/auth";
+import type { EmployeeRole } from "@/server/auth-gate";
 import { loadMyLeavePage } from "@/server/me";
 
 const BUCKETS = [
@@ -12,9 +14,28 @@ const BUCKETS = [
   ["Available", "availableMinutes"],
 ] as const;
 
+function UnitAmount({
+  minutes,
+  workdayMinutes,
+  legalUnit,
+}: {
+  minutes: number;
+  workdayMinutes: number;
+  legalUnit: string;
+}) {
+  const pair = formatUnitPair(minutes, workdayMinutes, legalUnit);
+  return (
+    <span className="font-mono text-sm tabular-nums">
+      {pair.primary}
+      <span className="ml-1 text-[11px] font-normal text-zinc-500">{pair.secondary}</span>
+    </span>
+  );
+}
+
 export default async function MePage() {
   const { employee } = await requireEmployee();
-  const page = await loadMyLeavePage(employee.id);
+  const actor = { id: employee.id, role: employee.role as EmployeeRole };
+  const page = await loadMyLeavePage(actor);
   const asOf = page.balances[0]?.balance.asOf ?? page.today;
 
   return (
@@ -51,7 +72,13 @@ export default async function MePage() {
                   {BUCKETS.map(([label, field]) => (
                     <div key={field} className="px-3 py-2">
                       <dt className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</dt>
-                      <dd className="font-mono text-sm tabular-nums">{formatHours(row.balance[field])}h</dd>
+                      <dd>
+                        <UnitAmount
+                          minutes={row.balance[field]}
+                          workdayMinutes={page.workdayMinutes}
+                          legalUnit={row.legalUnit}
+                        />
+                      </dd>
                     </div>
                   ))}
                 </dl>
@@ -73,6 +100,10 @@ export default async function MePage() {
               unlimited: type.unlimited,
               availableMinutes:
                 page.balances.find((row) => row.id === type.id)?.balance.availableMinutes ?? 0,
+              legalUnit: type.legalUnit,
+              minIncrementMinutes: type.minIncrementMinutes,
+              negativeAllowed: type.negativeAllowed,
+              negativeFloorMinutes: type.negativeFloorMinutes,
             }))}
             holidays={page.holidays}
             weekendDays={page.weekendDays}
@@ -95,13 +126,14 @@ export default async function MePage() {
                 <th className="py-1 pr-3 font-medium">Hours</th>
                 <th className="py-1 pr-3 font-medium">Intent</th>
                 <th className="py-1 pr-3 font-medium">Status</th>
-                <th className="py-1 font-medium">Note</th>
+                <th className="py-1 pr-3 font-medium">Note</th>
+                <th className="py-1 font-medium"> </th>
               </tr>
             </thead>
             <tbody>
               {page.entries.length === 0 ? (
                 <tr>
-                  <td className="py-3 text-zinc-600 dark:text-zinc-400" colSpan={8}>
+                  <td className="py-3 text-zinc-600 dark:text-zinc-400" colSpan={9}>
                     No entries yet.
                   </td>
                 </tr>
@@ -112,10 +144,21 @@ export default async function MePage() {
                     <td className="py-1 pr-3 font-mono tabular-nums">{row.endDate}</td>
                     <td className="py-1 pr-3">{row.leaveTypeName}</td>
                     <td className="py-1 pr-3">{row.portion}</td>
-                    <td className="py-1 pr-3 font-mono tabular-nums">{formatHours(row.totalMinutes)}</td>
+                    <td className="py-1 pr-3">
+                      <UnitAmount
+                        minutes={row.totalMinutes}
+                        workdayMinutes={page.workdayMinutes}
+                        legalUnit="hours"
+                      />
+                    </td>
                     <td className="py-1 pr-3">{row.intent}</td>
                     <td className="py-1 pr-3">{row.status}</td>
-                    <td className="max-w-xs truncate py-1">{row.note ?? ""}</td>
+                    <td className="max-w-xs truncate py-1" title={row.note ?? ""}>
+                      {row.note ?? ""}
+                    </td>
+                    <td className="py-1">
+                      {row.canCancel ? <CancelEntryButton entryId={row.id} /> : null}
+                    </td>
                   </tr>
                 ))
               )}
@@ -134,7 +177,7 @@ export default async function MePage() {
                 <th className="py-1 pr-3 font-medium">Type</th>
                 <th className="py-1 pr-3 font-medium">Kind</th>
                 <th className="py-1 pr-3 font-medium">Hours</th>
-                <th className="py-1 pr-3 font-medium">Year</th>
+                <th className="py-1 pr-3 font-medium">Remaining</th>
                 <th className="py-1 font-medium">Reason</th>
               </tr>
             </thead>
@@ -142,7 +185,7 @@ export default async function MePage() {
               {page.ledger.length === 0 ? (
                 <tr>
                   <td className="py-3 text-zinc-600 dark:text-zinc-400" colSpan={6}>
-                    No ledger rows.
+                    No ledger rows this year.
                   </td>
                 </tr>
               ) : (
@@ -156,9 +199,27 @@ export default async function MePage() {
                     <td className="py-1 pr-3 font-mono tabular-nums">{row.effectiveOn}</td>
                     <td className="py-1 pr-3">{row.leaveTypeName}</td>
                     <td className="py-1 pr-3 font-mono">{row.kind}</td>
-                    <td className="py-1 pr-3 font-mono tabular-nums">{formatHours(row.minutes)}</td>
-                    <td className="py-1 pr-3 font-mono tabular-nums">{row.periodYear}</td>
-                    <td className="max-w-xs truncate py-1">{row.reason ?? ""}</td>
+                    <td className="py-1 pr-3">
+                      <UnitAmount
+                        minutes={row.minutes}
+                        workdayMinutes={page.workdayMinutes}
+                        legalUnit="hours"
+                      />
+                    </td>
+                    <td className="py-1 pr-3">
+                      {row.remainingMinutes == null ? (
+                        "—"
+                      ) : (
+                        <UnitAmount
+                          minutes={row.remainingMinutes}
+                          workdayMinutes={page.workdayMinutes}
+                          legalUnit="hours"
+                        />
+                      )}
+                    </td>
+                    <td className="max-w-xs truncate py-1" title={row.reason ?? ""}>
+                      {row.reason ?? ""}
+                    </td>
                   </tr>
                 ))
               )}

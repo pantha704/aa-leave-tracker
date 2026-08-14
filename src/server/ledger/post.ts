@@ -1,11 +1,17 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { ledgerEntries } from "@/db/schema";
-import type { LedgerDb, LedgerKind } from "./balance";
+import { periodYearFromAsOf, requireIsoDate, type LedgerDb, type LedgerKind } from "./balance";
 
 const DEBIT_KINDS = new Set<LedgerKind>(["usage", "forfeit"]);
 const GRANT_ONCE_KINDS = new Set<LedgerKind>(["grant_lump", "accrual", "carryover"]);
 
 export type PostableKind = Exclude<LedgerKind, "reversal">;
+
+/** Drizzle session that can open a transaction (pool root, not an in-flight tx helper). */
+export type LedgerSession = LedgerDb;
+
+/** In-flight transaction from `withEmployeeLock`. Nested `transaction()` is a savepoint. */
+export type LedgerTx = LedgerDb;
 
 export type PostLedgerInput = {
   employeeId: string;
@@ -66,17 +72,19 @@ export function signedLedgerMinutes(kind: LedgerKind, minutes: number): number {
   return value;
 }
 
+/** period_year is always year(effective_on). An override must match. */
 export function periodYearForEffectiveOn(effectiveOn: string, periodYear?: number): number {
+  const iso = requireIsoDate(effectiveOn, "effectiveOn");
+  const fromDate = periodYearFromAsOf(iso, "UTC");
   if (periodYear !== undefined) {
     if (!Number.isInteger(periodYear)) {
       throw new Error("periodYear must be an integer");
     }
-    return periodYear;
+    if (periodYear !== fromDate) {
+      throw new Error("periodYear must equal year(effectiveOn)");
+    }
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveOn)) {
-    throw new Error("effectiveOn must be YYYY-MM-DD");
-  }
-  return Number(effectiveOn.slice(0, 4));
+  return fromDate;
 }
 
 export function liveGrantOnceKey(row: {
@@ -127,7 +135,7 @@ export function prepareLedgerInsert(input: PostLedgerInput): PreparedLedgerInser
     leaveTypeId: input.leaveTypeId,
     kind: input.kind,
     minutes: signedLedgerMinutes(input.kind, input.minutes),
-    effectiveOn: input.effectiveOn,
+    effectiveOn: requireIsoDate(input.effectiveOn, "effectiveOn"),
     periodYear: periodYearForEffectiveOn(input.effectiveOn, input.periodYear),
     leaveEntryId: input.leaveEntryId ?? null,
     leaveDayId: input.leaveDayId ?? null,
@@ -177,45 +185,46 @@ export function employeeAdvisoryLockQuery(employeeId: string) {
   return sql`SELECT pg_advisory_xact_lock(hashtextextended(${employeeId}::text, 0))`;
 }
 
-export async function acquireEmployeeLock(tx: LedgerDb, employeeId: string): Promise<void> {
+export async function acquireEmployeeLock(tx: LedgerTx, employeeId: string): Promise<void> {
   await tx.execute(employeeAdvisoryLockQuery(employeeId));
 }
 
-async function inEmployeeLock<T>(
-  db: LedgerDb,
-  employeeId: string,
-  fn: (tx: LedgerDb) => Promise<T>,
-): Promise<T> {
-  return db.transaction(async (tx) => {
-    await acquireEmployeeLock(tx as unknown as LedgerDb, employeeId);
-    return fn(tx as unknown as LedgerDb);
-  });
+async function insertPrepared(tx: LedgerTx, values: PreparedLedgerInsert): Promise<LedgerRow> {
+  const inserted = await tx.insert(ledgerEntries).values(values).returning();
+  const row = inserted[0];
+  if (!row) {
+    throw new Error("ledger insert returned no row");
+  }
+  return row;
 }
 
-export async function postLedgerEntry(db: LedgerDb, input: PostLedgerInput): Promise<LedgerRow> {
+/**
+ * Opens a transaction, locks the employee, then inserts.
+ * Do not call this on a root session from inside `withEmployeeLock` — that is a second
+ * pool connection and deadlocks on the same advisory key. Use `postLedgerEntryInTx`.
+ */
+export async function postLedgerEntry(db: LedgerSession, input: PostLedgerInput): Promise<LedgerRow> {
   const values = prepareLedgerInsert(input);
-  return inEmployeeLock(db, input.employeeId, async (tx) => {
-    const inserted = await tx.insert(ledgerEntries).values(values).returning();
-    const row = inserted[0];
-    if (!row) {
-      throw new Error("ledger insert returned no row");
-    }
-    return row;
+  return db.transaction(async (tx) => {
+    const locked = tx as unknown as LedgerTx;
+    await acquireEmployeeLock(locked, input.employeeId);
+    return insertPrepared(locked, values);
   });
 }
 
 export async function reverseLedgerEntry(
-  db: LedgerDb,
+  db: LedgerSession,
   input: ReverseLedgerInput,
 ): Promise<{ original: LedgerRow; reversal: LedgerRow }> {
   return db.transaction(async (tx) => {
-    const found = await tx.select().from(ledgerEntries).where(eq(ledgerEntries.id, input.id));
+    const locked = tx as unknown as LedgerTx;
+    const found = await locked.select().from(ledgerEntries).where(eq(ledgerEntries.id, input.id));
     const original = found[0];
     if (!original) {
       throw new Error(`ledger row not found: ${input.id}`);
     }
 
-    await acquireEmployeeLock(tx as unknown as LedgerDb, original.employeeId);
+    await acquireEmployeeLock(locked, original.employeeId);
 
     const prepared = prepareReversal(
       {
@@ -225,7 +234,7 @@ export async function reverseLedgerEntry(
       input,
     );
 
-    const updated = await tx
+    const updated = await locked
       .update(ledgerEntries)
       .set({ reversedAt: prepared.reversedAt })
       .where(and(eq(ledgerEntries.id, original.id), isNull(ledgerEntries.reversedAt)))
@@ -235,30 +244,37 @@ export async function reverseLedgerEntry(
       throw new Error("ledger row already reversed");
     }
 
-    const inserted = await tx.insert(ledgerEntries).values(prepared.reversal).returning();
-    const reversal = inserted[0];
-    if (!reversal) {
-      throw new Error("reversal insert returned no row");
-    }
+    const reversal = await insertPrepared(locked, prepared.reversal);
     return { original: reversedOriginal, reversal };
   });
 }
 
+/**
+ * Multi-row approve/close: one lock, then `postLedgerEntryInTx` on the same tx.
+ * The lock is held until this callback's transaction commits.
+ */
 export async function withEmployeeLock<T>(
-  db: LedgerDb,
+  db: LedgerSession,
   employeeId: string,
-  fn: (tx: LedgerDb) => Promise<T>,
+  fn: (tx: LedgerTx) => Promise<T>,
 ): Promise<T> {
-  return inEmployeeLock(db, employeeId, fn);
+  return db.transaction(async (tx) => {
+    const locked = tx as unknown as LedgerTx;
+    await acquireEmployeeLock(locked, employeeId);
+    return fn(locked);
+  });
 }
 
-export async function postLedgerEntryInTx(tx: LedgerDb, input: PostLedgerInput): Promise<LedgerRow> {
-  await acquireEmployeeLock(tx, input.employeeId);
+/**
+ * Insert on an existing transaction (from `withEmployeeLock`).
+ * Always wraps lock+insert in `tx.transaction` so a root `db` still holds the lock
+ * until commit (nested call = savepoint; same xact lock).
+ */
+export async function postLedgerEntryInTx(tx: LedgerTx, input: PostLedgerInput): Promise<LedgerRow> {
   const values = prepareLedgerInsert(input);
-  const inserted = await tx.insert(ledgerEntries).values(values).returning();
-  const row = inserted[0];
-  if (!row) {
-    throw new Error("ledger insert returned no row");
-  }
-  return row;
+  return tx.transaction(async (inner) => {
+    const locked = inner as unknown as LedgerTx;
+    await acquireEmployeeLock(locked, input.employeeId);
+    return insertPrepared(locked, values);
+  });
 }

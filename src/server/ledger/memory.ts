@@ -9,6 +9,12 @@ import {
 
 export type MemoryLedgerRow = PreparedLedgerInsert & { id: string };
 
+export type MemoryBalanceScope = {
+  employeeId: string;
+  leaveTypeId: string;
+  timeZone?: string;
+};
+
 /** In-memory ledger that applies the same prepare/unique rules as SQL posts. */
 export class MemoryLedger {
   readonly rows: MemoryLedgerRow[] = [];
@@ -34,12 +40,14 @@ export class MemoryLedger {
     return row;
   }
 
-  balance(asOf: string, timeZone = "UTC"): Balance {
+  balance(asOf: string, scope: MemoryBalanceScope): Balance {
     return computeBalance({
       rows: this.rows,
       pendingEntries: this.pending,
       asOf,
-      timeZone,
+      timeZone: scope.timeZone ?? "UTC",
+      employeeId: scope.employeeId,
+      leaveTypeId: scope.leaveTypeId,
     });
   }
 }

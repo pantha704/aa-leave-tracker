@@ -17,3 +17,6 @@ jobs:
       - run: bun run test
       - run: bunx playwright install --with-deps chromium
       - run: bun run test:e2e
+        env:
+          BETTER_AUTH_SECRET: ci-secret-at-least-32-characters-long
+          BETTER_AUTH_URL: http://127.0.0.1:3000

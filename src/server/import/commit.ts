@@ -14,6 +14,7 @@ import {
 import { tryWriteAudit, writeAuditEvent, type AuditWriter } from "@/server/audit";
 import { getDb } from "@/server/db";
 import type { LedgerKind } from "@/server/ledger/balance";
+import { isUniqueViolation } from "@/server/pg-error";
 import {
   acquireEmployeeLock,
   prepareLedgerInsert,
@@ -27,11 +28,12 @@ import {
   planFirstYearSickGrants,
   type DryRunOptions,
   type DryRunResult,
+  type ImportOccupancy,
   type ImportWorld,
   type PlannedHistoricalEntry,
   type PlannedLedgerPost,
 } from "./dry-run";
-import type { ColumnMap, ImportKind } from "./csv";
+import { importErrorsToCsv, type ColumnMap, type ImportCsvError, type ImportKind } from "./csv";
 
 export type ImportBatchRecord = {
   id: string;
@@ -69,17 +71,20 @@ export type ReverseImportResult =
   | { ok: true; batch: ImportBatchRecord; reversedLedger: number; cancelledEntries: number }
   | { ok: false; error: string; status: 404 | 409 };
 
+export type ApplyCommitInput = {
+  orgId: string;
+  actorId: string;
+  kind: ImportKind;
+  csv: string;
+  map: ColumnMap;
+  filename: string | null;
+  now: Date;
+  options?: DryRunOptions;
+};
+
 export type ImportCommitStore = {
   loadWorld: (orgId: string) => Promise<ImportWorld>;
-  commitPlan: (input: {
-    orgId: string;
-    actorId: string;
-    kind: ImportKind;
-    filename: string | null;
-    posts: PlannedLedgerPost[];
-    entries: PlannedHistoricalEntry[];
-    now: Date;
-  }) => Promise<ImportBatchRecord>;
+  applyCommit: (input: ApplyCommitInput) => Promise<CommitImportResult>;
   reverseBatch: (input: {
     orgId: string;
     batchId: string;
@@ -106,42 +111,31 @@ export async function commitImport(
   store: ImportCommitStore,
   options: DryRunOptions & { writeAudit?: AuditWriter; now?: Date } = {},
 ): Promise<CommitImportResult> {
-  const dryRun = await previewImport(input.orgId, input.kind, input.csv, input.map, store, options);
-  if (!dryRun.ok) {
-    return { ok: false, dryRun };
-  }
-
-  const now = options.now ?? new Date();
-  const batch = await store.commitPlan({
+  const result = await store.applyCommit({
     orgId: input.orgId,
     actorId: input.actor.id,
     kind: input.kind,
+    csv: input.csv,
+    map: input.map,
     filename: input.filename ?? null,
-    posts: dryRun.posts,
-    entries: dryRun.entries,
-    now,
+    now: options.now ?? new Date(),
+    options,
   });
+  if (!result.ok) return result;
 
   await tryWriteAudit(options.writeAudit ?? writeAuditEvent, {
     actorId: input.actor.id,
     action: "import.commit",
     entityType: "import_batch",
-    entityId: batch.id,
+    entityId: result.batch.id,
     after: {
       kind: input.kind,
-      posted: dryRun.posts.length,
-      entries: dryRun.entries.length,
+      posted: result.posted,
+      entries: result.entries,
       filename: input.filename ?? null,
     },
   });
-
-  return {
-    ok: true,
-    batch,
-    dryRun,
-    posted: dryRun.posts.length,
-    entries: dryRun.entries.length,
-  };
+  return result;
 }
 
 export async function reverseImportBatch(
@@ -182,95 +176,246 @@ function toBatch(row: typeof importBatches.$inferSelect): ImportBatchRecord {
   };
 }
 
+type WorldDb = ReturnType<typeof getDb>;
+
+async function loadWorldFrom(db: WorldDb, orgId: string): Promise<ImportWorld> {
+  const people = await db
+    .select({
+      id: employees.id,
+      email: employees.email,
+      name: employees.name,
+      startDate: employees.startDate,
+      workdayMinutes: employees.workdayMinutes,
+    })
+    .from(employees)
+    .where(eq(employees.orgId, orgId));
+
+  const org = await db
+    .select({
+      standardWorkdayMinutes: organizations.standardWorkdayMinutes,
+      weekendDays: organizations.weekendDays,
+    })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1);
+  const orgWorkday = org[0]?.standardWorkdayMinutes ?? 480;
+  const weekendDays = org[0]?.weekendDays ?? [6, 7];
+
+  const types = await db
+    .select({
+      id: leaveTypes.id,
+      code: leaveTypes.code,
+      name: leaveTypes.name,
+      consumesBalance: leaveTypes.consumesBalance,
+    })
+    .from(leaveTypes)
+    .where(eq(leaveTypes.orgId, orgId));
+
+  const policyRows = await db
+    .select({
+      employeeId: policyAssignments.employeeId,
+      leaveTypeId: policies.leaveTypeId,
+      grantMode: policies.grantMode,
+      grantMinutes: policies.grantMinutes,
+    })
+    .from(policies)
+    .innerJoin(policyAssignments, eq(policyAssignments.policyId, policies.id))
+    .innerJoin(employees, eq(employees.id, policyAssignments.employeeId))
+    .where(eq(employees.orgId, orgId));
+
+  const employeeIds = people.map((row) => row.id);
+  const ledger =
+    employeeIds.length === 0
+      ? []
+      : await db
+          .select({
+            kind: ledgerEntries.kind,
+            minutes: ledgerEntries.minutes,
+            effectiveOn: ledgerEntries.effectiveOn,
+            periodYear: ledgerEntries.periodYear,
+            reversedAt: ledgerEntries.reversedAt,
+            employeeId: ledgerEntries.employeeId,
+            leaveTypeId: ledgerEntries.leaveTypeId,
+            reason: ledgerEntries.reason,
+          })
+          .from(ledgerEntries)
+          .where(inArray(ledgerEntries.employeeId, employeeIds));
+
+  const holidayRows = await db
+    .select({ onDate: holidays.onDate })
+    .from(holidays)
+    .where(eq(holidays.orgId, orgId));
+
+  const occupancy: ImportOccupancy[] =
+    employeeIds.length === 0
+      ? []
+      : (
+          await db
+            .select({
+              employeeId: leaveDays.employeeId,
+              onDate: leaveDays.onDate,
+              portion: leaveDays.portion,
+              consumesBalance: leaveDays.consumesBalance,
+              slotActive: leaveDays.slotActive,
+              status: leaveEntries.status,
+            })
+            .from(leaveDays)
+            .innerJoin(leaveEntries, eq(leaveEntries.id, leaveDays.leaveEntryId))
+            .where(inArray(leaveDays.employeeId, employeeIds))
+        ).map((row) => ({
+          employeeId: row.employeeId,
+          onDate: row.onDate,
+          portion: row.portion as ImportOccupancy["portion"],
+          consumesBalance: row.consumesBalance,
+          slotActive: row.slotActive,
+          status: row.status,
+        }));
+
+  const worldBase = {
+    employees: people.map((row) => ({
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      startDate: row.startDate,
+      workdayMinutes: row.workdayMinutes,
+      orgWorkdayMinutes: orgWorkday,
+      weekendDays,
+    })),
+    leaveTypes: types,
+    policies: policyRows,
+    ledger,
+    holidays: holidayRows,
+    occupancy,
+  };
+
+  return {
+    ...worldBase,
+    plannedFirstYearGrants: planFirstYearSickGrants(worldBase),
+  };
+}
+
+function emptyDryRun(kind: ImportKind, errors: ImportCsvError[]): DryRunResult {
+  return {
+    ok: false,
+    kind,
+    headers: [],
+    errors,
+    warnings: [],
+    errorCsv: importErrorsToCsv(errors),
+    posts: [],
+    entries: [],
+    diffs: [],
+  };
+}
+
+async function writeImportPlan(
+  tx: LedgerTx,
+  input: {
+    orgId: string;
+    actorId: string;
+    kind: ImportKind;
+    filename: string | null;
+    posts: PlannedLedgerPost[];
+    entries: PlannedHistoricalEntry[];
+    now: Date;
+  },
+): Promise<ImportBatchRecord> {
+  const employeeIds = [
+    ...new Set([
+      ...input.posts.map((post) => post.employeeId),
+      ...input.entries.map((entry) => entry.employeeId),
+    ]),
+  ].sort();
+
+  const [batch] = await tx
+    .insert(importBatches)
+    .values({
+      orgId: input.orgId,
+      kind: input.kind,
+      filename: input.filename,
+      createdBy: input.actorId,
+      createdAt: input.now,
+    })
+    .returning();
+  if (!batch) throw new Error("import batch insert returned no row");
+
+  const entryIds: string[] = [];
+  for (const planned of input.entries) {
+    const entryId = crypto.randomUUID();
+    entryIds.push(entryId);
+    await tx.insert(leaveEntries).values({
+      id: entryId,
+      employeeId: planned.employeeId,
+      leaveTypeId: planned.leaveTypeId,
+      intent: planned.intent,
+      status: planned.status,
+      immutableAt: input.now,
+      startDate: planned.startDate,
+      endDate: planned.endDate,
+      portion: planned.portion,
+      customMinutes: planned.customMinutes,
+      totalMinutes: planned.totalMinutes,
+      note: planned.note,
+      importBatchId: batch.id,
+      createdBy: input.actorId,
+      updatedBy: input.actorId,
+      createdAt: input.now,
+      updatedAt: input.now,
+    });
+    if (planned.days.length > 0) {
+      await tx.insert(leaveDays).values(
+        planned.days.map((day) => ({
+          id: crypto.randomUUID(),
+          leaveEntryId: entryId,
+          employeeId: planned.employeeId,
+          onDate: day.onDate,
+          minutes: day.minutes,
+          portion: day.portion,
+          consumesBalance: day.consumesBalance,
+          slotActive: planned.status === "approved",
+        })),
+      );
+    }
+  }
+
+  const usageByLine = new Map<number, string>();
+  input.entries.forEach((entry, index) => {
+    usageByLine.set(entry.line, entryIds[index] ?? "");
+  });
+
+  const postsByEmployee = new Map<string, PlannedLedgerPost[]>();
+  for (const post of input.posts) {
+    const list = postsByEmployee.get(post.employeeId) ?? [];
+    list.push(post);
+    postsByEmployee.set(post.employeeId, list);
+  }
+
+  for (const employeeId of employeeIds) {
+    const posts = postsByEmployee.get(employeeId) ?? [];
+    for (const post of posts) {
+      const values: PostLedgerInput = {
+        employeeId: post.employeeId,
+        leaveTypeId: post.leaveTypeId,
+        kind: post.kind,
+        minutes: post.minutes,
+        effectiveOn: post.effectiveOn,
+        periodYear: post.periodYear,
+        importBatchId: batch.id,
+        leaveEntryId: post.kind === "usage" ? (usageByLine.get(post.line) ?? null) : null,
+        reason: post.reason,
+        createdBy: input.actorId,
+        createdAt: input.now,
+      };
+      await tx.insert(ledgerEntries).values(prepareLedgerInsert(values));
+    }
+  }
+
+  return toBatch(batch);
+}
+
 export const dbImportStore: ImportCommitStore = {
   async loadWorld(orgId) {
-    const db = getDb();
-    const people = await db
-      .select({
-        id: employees.id,
-        email: employees.email,
-        name: employees.name,
-        startDate: employees.startDate,
-        workdayMinutes: employees.workdayMinutes,
-      })
-      .from(employees)
-      .where(eq(employees.orgId, orgId));
-
-    const org = await db
-      .select({
-        standardWorkdayMinutes: organizations.standardWorkdayMinutes,
-        weekendDays: organizations.weekendDays,
-      })
-      .from(organizations)
-      .where(eq(organizations.id, orgId))
-      .limit(1);
-    const orgWorkday = org[0]?.standardWorkdayMinutes ?? 480;
-    const weekendDays = org[0]?.weekendDays ?? [6, 7];
-
-    const types = await db
-      .select({
-        id: leaveTypes.id,
-        code: leaveTypes.code,
-        name: leaveTypes.name,
-        consumesBalance: leaveTypes.consumesBalance,
-      })
-      .from(leaveTypes)
-      .where(eq(leaveTypes.orgId, orgId));
-
-    const policyRows = await db
-      .select({
-        leaveTypeId: policies.leaveTypeId,
-        grantMode: policies.grantMode,
-        grantMinutes: policies.grantMinutes,
-      })
-      .from(policies)
-      .innerJoin(policyAssignments, eq(policyAssignments.policyId, policies.id))
-      .innerJoin(employees, eq(employees.id, policyAssignments.employeeId))
-      .where(eq(employees.orgId, orgId));
-
-    const employeeIds = people.map((row) => row.id);
-    const ledger =
-      employeeIds.length === 0
-        ? []
-        : await db
-            .select({
-              kind: ledgerEntries.kind,
-              minutes: ledgerEntries.minutes,
-              effectiveOn: ledgerEntries.effectiveOn,
-              periodYear: ledgerEntries.periodYear,
-              reversedAt: ledgerEntries.reversedAt,
-              employeeId: ledgerEntries.employeeId,
-              leaveTypeId: ledgerEntries.leaveTypeId,
-              reason: ledgerEntries.reason,
-            })
-            .from(ledgerEntries)
-            .where(inArray(ledgerEntries.employeeId, employeeIds));
-
-    const holidayRows = await db
-      .select({ onDate: holidays.onDate })
-      .from(holidays)
-      .where(eq(holidays.orgId, orgId));
-
-    const worldBase = {
-      employees: people.map((row) => ({
-        id: row.id,
-        email: row.email,
-        name: row.name,
-        startDate: row.startDate,
-        workdayMinutes: row.workdayMinutes,
-        orgWorkdayMinutes: orgWorkday,
-        weekendDays,
-      })),
-      leaveTypes: types,
-      policies: policyRows,
-      ledger,
-      holidays: holidayRows,
-    };
-
-    return {
-      ...worldBase,
-      plannedFirstYearGrants: planFirstYearSickGrants(worldBase),
-    };
+    return loadWorldFrom(getDb(), orgId);
   },
 
   async listBatches(orgId) {
@@ -282,103 +427,61 @@ export const dbImportStore: ImportCommitStore = {
     return rows.map(toBatch);
   },
 
-  async commitPlan(input) {
+  async applyCommit(input) {
     const db = getDb();
-    const employeeIds = [
-      ...new Set([
-        ...input.posts.map((post) => post.employeeId),
-        ...input.entries.map((entry) => entry.employeeId),
-      ]),
-    ];
+    try {
+      return await db.transaction(async (tx) => {
+        const locked = tx as unknown as LedgerTx;
+        const first = await loadWorldFrom(tx as unknown as WorldDb, input.orgId);
+        const preview = dryRunImport(input.csv, input.kind, input.map, first, input.options);
+        if (!preview.ok) return { ok: false as const, dryRun: preview };
 
-    return db.transaction(async (tx) => {
-      const [batch] = await tx
-        .insert(importBatches)
-        .values({
+        const employeeIds = [
+          ...new Set([
+            ...preview.posts.map((post) => post.employeeId),
+            ...preview.entries.map((entry) => entry.employeeId),
+          ]),
+        ].sort();
+        for (const employeeId of employeeIds) {
+          await acquireEmployeeLock(locked, employeeId);
+        }
+
+        const world = await loadWorldFrom(tx as unknown as WorldDb, input.orgId);
+        const dryRun = dryRunImport(input.csv, input.kind, input.map, world, input.options);
+        if (!dryRun.ok) return { ok: false as const, dryRun };
+
+        const batch = await writeImportPlan(locked, {
           orgId: input.orgId,
+          actorId: input.actorId,
           kind: input.kind,
           filename: input.filename,
-          createdBy: input.actorId,
-          createdAt: input.now,
-        })
-        .returning();
-      if (!batch) throw new Error("import batch insert returned no row");
-
-      const entryIds: string[] = [];
-      for (const planned of input.entries) {
-        const entryId = crypto.randomUUID();
-        entryIds.push(entryId);
-        await tx.insert(leaveEntries).values({
-          id: entryId,
-          employeeId: planned.employeeId,
-          leaveTypeId: planned.leaveTypeId,
-          intent: planned.intent,
-          status: "approved",
-          immutableAt: input.now,
-          startDate: planned.startDate,
-          endDate: planned.endDate,
-          portion: planned.portion,
-          customMinutes: planned.customMinutes,
-          totalMinutes: planned.totalMinutes,
-          note: planned.note,
-          importBatchId: batch.id,
-          createdBy: input.actorId,
-          updatedBy: input.actorId,
-          createdAt: input.now,
-          updatedAt: input.now,
+          posts: dryRun.posts,
+          entries: dryRun.entries,
+          now: input.now,
         });
-        if (planned.days.length > 0) {
-          await tx.insert(leaveDays).values(
-            planned.days.map((day) => ({
-              id: crypto.randomUUID(),
-              leaveEntryId: entryId,
-              employeeId: planned.employeeId,
-              onDate: day.onDate,
-              minutes: day.minutes,
-              portion: day.portion,
-              consumesBalance: day.consumesBalance,
-              slotActive: true,
-            })),
-          );
-        }
-      }
-
-      const usageByLine = new Map<number, string>();
-      input.entries.forEach((entry, index) => {
-        usageByLine.set(entry.line, entryIds[index] ?? "");
+        return {
+          ok: true as const,
+          batch,
+          dryRun,
+          posted: dryRun.posts.length,
+          entries: dryRun.entries.length,
+        };
       });
-
-      const postsByEmployee = new Map<string, PlannedLedgerPost[]>();
-      for (const post of input.posts) {
-        const list = postsByEmployee.get(post.employeeId) ?? [];
-        list.push(post);
-        postsByEmployee.set(post.employeeId, list);
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        return {
+          ok: false,
+          dryRun: emptyDryRun(input.kind, [
+            {
+              line: 1,
+              code: "UNIQUE",
+              message: "import conflicts with an existing live opening or occupying leave day",
+            },
+          ]),
+        };
       }
-
-      for (const employeeId of employeeIds) {
-        const locked = tx as unknown as LedgerTx;
-        await acquireEmployeeLock(locked, employeeId);
-        const posts = postsByEmployee.get(employeeId) ?? [];
-        for (const post of posts) {
-          const values: PostLedgerInput = {
-            employeeId: post.employeeId,
-            leaveTypeId: post.leaveTypeId,
-            kind: post.kind,
-            minutes: post.minutes,
-            effectiveOn: post.effectiveOn,
-            periodYear: post.periodYear,
-            importBatchId: batch.id,
-            leaveEntryId: post.kind === "usage" ? (usageByLine.get(post.line) ?? null) : null,
-            reason: post.reason,
-            createdBy: input.actorId,
-            createdAt: input.now,
-          };
-          await locked.insert(ledgerEntries).values(prepareLedgerInsert(values));
-        }
-      }
-
-      return toBatch(batch);
-    });
+      throw err;
+    }
   },
 
   async reverseBatch(input) {
@@ -407,7 +510,8 @@ export const dbImportStore: ImportCommitStore = {
 
       let reversedLedger = 0;
       const locked = tx as unknown as LedgerTx;
-      for (const [employeeId, rows] of byEmployee) {
+      for (const employeeId of [...byEmployee.keys()].sort()) {
+        const rows = byEmployee.get(employeeId) ?? [];
         await acquireEmployeeLock(locked, employeeId);
         for (const original of rows) {
           const prepared = prepareReversal(
@@ -434,6 +538,7 @@ export const dbImportStore: ImportCommitStore = {
         }
       }
 
+      // Import reverse is an explicit batch exception (audit: import.reverse), not decide.ts cancel.
       const cancelled = await tx
         .update(leaveEntries)
         .set({

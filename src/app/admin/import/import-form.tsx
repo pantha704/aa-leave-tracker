@@ -5,6 +5,7 @@ import { minutesToHours } from "@/server/admin/employees";
 import {
   ENTRY_FIELDS,
   OPENING_FIELDS,
+  suggestImportMap,
   type ColumnMap,
   type ImportField,
   type ImportKind,
@@ -23,14 +24,30 @@ export function LeaveImportForm() {
   const [commitState, commitAction, commitPending] = useActionState(commitImportAction, undefined);
 
   const mapped = headersState && headersState.ok && headersState.step === "mapped" ? headersState : null;
-  const preview = previewState && previewState.ok && previewState.step === "preview" ? previewState : null;
-  const committed = commitState && commitState.ok && commitState.step === "committed" ? commitState : null;
-  const failed = commitState && !commitState.ok ? commitState : null;
-  const kind: ImportKind = preview?.kind ?? mapped?.kind ?? "opening";
-  const headers = preview?.headers ?? mapped?.headers ?? [];
-  const csv = preview?.csv ?? mapped?.csv ?? "";
-  const filename = preview?.filename ?? mapped?.filename ?? "";
+  const uploadKey = mapped ? `${mapped.kind}:${mapped.filename}:${mapped.csv}` : "";
+  const preview =
+    previewState &&
+    previewState.ok &&
+    previewState.step === "preview" &&
+    mapped &&
+    previewState.csv === mapped.csv &&
+    previewState.kind === mapped.kind
+      ? previewState
+      : null;
+  const committed =
+    commitState && commitState.ok && commitState.step === "committed" && commitState.csv === mapped?.csv
+      ? commitState
+      : null;
+  const failed =
+    commitState && !commitState.ok && (!mapped || !commitState.csv || commitState.csv === mapped.csv)
+      ? commitState
+      : null;
+  const kind: ImportKind = mapped?.kind ?? "opening";
+  const headers = mapped?.headers ?? [];
+  const csv = mapped?.csv ?? "";
+  const filename = mapped?.filename ?? "";
   const fields: readonly ImportField[] = kind === "opening" ? OPENING_FIELDS : ENTRY_FIELDS;
+  const suggestions = mapped ? suggestImportMap(mapped.headers, mapped.kind) : {};
   const dryRun = failed?.preview ?? preview?.preview;
 
   return (
@@ -48,16 +65,16 @@ export function LeaveImportForm() {
           <input className={fieldClass} type="file" name="file" accept=".csv,text/csv" required />
         </label>
         <p className="text-xs text-zinc-600 dark:text-zinc-400">
-          Headers are not assumed. After upload, map each field to a column. Opening remaining is
-          always an adjustment — never a grant_lump.
+          Headers are not assumed. After upload, map each field to a column. Opening remaining posts
+          sheet − app (adjustment only). Import opening or same-year used days, not both.
         </p>
         <button className={buttonClass} type="submit" disabled={parsePending}>
           Read headers
         </button>
       </form>
 
-      {mapped || preview ? (
-        <form action={previewAction} className="flex flex-col gap-3">
+      {mapped ? (
+        <form key={`map-${uploadKey}`} action={previewAction} className="flex flex-col gap-3">
           <input type="hidden" name="kind" value={kind} />
           <input type="hidden" name="csv" value={csv} />
           <input type="hidden" name="filename" value={filename} />
@@ -67,11 +84,7 @@ export function LeaveImportForm() {
             {fields.map((field) => (
               <label key={field} className="flex flex-col gap-1 text-xs">
                 {field}
-                <select
-                  className={fieldClass}
-                  name={`map_${field}`}
-                  defaultValue={mappedValue(preview?.map, field)}
-                >
+                <select className={fieldClass} name={`map_${field}`} defaultValue={mappedValue(suggestions, field)}>
                   <option value="">(unmapped)</option>
                   {headers.map((header) => (
                     <option key={`${field}-${header}`} value={header}>
@@ -91,7 +104,7 @@ export function LeaveImportForm() {
       {dryRun ? <DryRunPanel preview={dryRun} /> : null}
 
       {preview && dryRun?.ok ? (
-        <form action={commitAction} className="flex flex-col gap-3">
+        <form key={`commit-${uploadKey}`} action={commitAction} className="flex flex-col gap-3">
           <input type="hidden" name="kind" value={kind} />
           <input type="hidden" name="csv" value={csv} />
           <input type="hidden" name="filename" value={filename} />
@@ -149,6 +162,7 @@ function DryRunPanel({ preview }: { preview: DryRunResult }) {
       ) : (
         <p role="status">
           {preview.posts.length} ledger post(s), {preview.entries.length} historical entry(ies).
+          {preview.warnings.length > 0 ? ` ${preview.warnings.length} warning(s).` : ""}
         </p>
       )}
 
@@ -161,7 +175,7 @@ function DryRunPanel({ preview }: { preview: DryRunResult }) {
                 <th className="py-2 pr-4 font-medium">Type</th>
                 <th className="py-2 pr-4 font-medium">Sheet remaining</th>
                 <th className="py-2 pr-4 font-medium">App remaining</th>
-                <th className="py-2 font-medium">Delta (h)</th>
+                <th className="py-2 font-medium">Adjust (h)</th>
               </tr>
             </thead>
             <tbody>

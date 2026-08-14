@@ -77,12 +77,13 @@ describe("CSV column map", () => {
 
 describe("remainingFromOpening", () => {
   it("prefers granted minus used, then remaining-only with data-loss flag", () => {
-    expect(remainingFromOpening({ grantedHours: 80, usedHours: 40, remainingHours: 99 })).toEqual({
+    expect(remainingFromOpening({ grantedHours: 80, usedHours: 40, remainingHours: 40 })).toEqual({
       ok: true,
       minutes: hoursToMinutes(40),
       source: "granted_minus_used",
       dataLoss: false,
     });
+    expect(remainingFromOpening({ grantedHours: 80, usedHours: 40, remainingHours: 99 }).ok).toBe(false);
     expect(remainingFromOpening({ grantedHours: null, usedHours: null, remainingHours: 12.5 })).toEqual({
       ok: true,
       minutes: 750,
@@ -92,6 +93,12 @@ describe("remainingFromOpening", () => {
     expect(remainingFromOpening({ grantedHours: 80, usedHours: null, remainingHours: null }).ok).toBe(
       false,
     );
+  });
+
+  it("does not treat granted_hours as a forbidden grant target", () => {
+    expect(GRANT_MAP_TARGETS.has("granted")).toBe(false);
+    expect(GRANT_MAP_TARGETS.has("grant_hours")).toBe(false);
+    expect(grantMapTargets({ granted_hours: "Granted Hrs", used_hours: "Used Hrs" })).toEqual([]);
   });
 
   it("writes error CSV with line numbers", () => {

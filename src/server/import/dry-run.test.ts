@@ -30,6 +30,7 @@ function world(overrides: Partial<ImportWorld> = {}): ImportWorld {
     ],
     ledger: [],
     holidays: [],
+    occupancy: [],
     plannedFirstYearGrants: [],
     ...overrides,
   };
@@ -46,14 +47,14 @@ describe("dry-run opening remaining", () => {
   it("plans adjustment only, never grant_lump, including 0 remaining", () => {
     const csv = [
       "email,leave_type,as_of,remaining_hours",
-      "ada@example.com,vacation_unpaid,2026-03-01,40.00",
+      "ada@example.com,vacation_unpaid,2026-03-01,0",
     ].join("\n");
     const result = dryRunImport(csv, "opening", openingMap, world());
     expect(result.ok).toBe(true);
     expect(result.posts).toHaveLength(1);
     expect(result.posts[0]).toMatchObject({
       kind: "adjustment",
-      minutes: 2400,
+      minutes: 0,
       effectiveOn: "2026-03-01",
       periodYear: 2026,
       reason: IMPORT_OPENING_REASON,
@@ -61,6 +62,17 @@ describe("dry-run opening remaining", () => {
       leaveTypeId: VACATION,
     });
     expect(result.posts.some((post) => (post.kind as string) === "grant_lump")).toBe(false);
+  });
+
+  it("rejects a header-only file", () => {
+    const result = dryRunImport(
+      "email,leave_type,as_of,remaining_hours\n",
+      "opening",
+      openingMap,
+      world(),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((row) => row.code === "EMPTY")).toBe(true);
   });
 
   it("hard-fails a mapped grant column", () => {
@@ -147,6 +159,7 @@ describe("dry-run opening remaining", () => {
       }),
     );
     expect(result.ok).toBe(true);
+    expect(result.posts[0]?.minutes).toBe(120);
     expect(result.diffs).toEqual([
       {
         line: 2,
@@ -155,7 +168,7 @@ describe("dry-run opening remaining", () => {
         asOf: "2026-03-01",
         sheetRemainingMinutes: 600,
         appRemainingMinutes: 480,
-        deltaMinutes: -120,
+        deltaMinutes: 120,
       },
     ]);
   });
@@ -187,6 +200,84 @@ describe("dry-run historical entries", () => {
       totalMinutes: 480,
     });
     expect(result.posts[0]?.kind).toBe("usage");
+  });
+
+  it("hard-fails occupancy overlap in dry-run, including in-file duplicates", () => {
+    const csv = [
+      "email,leave_type,start,end,hours,portion",
+      "ada@example.com,vacation_unpaid,2026-03-02,2026-03-02,8.00,full",
+      "ada@example.com,vacation_unpaid,2026-03-02,2026-03-02,4.00,am",
+    ].join("\n");
+    const map = {
+      email: "email",
+      leave_type: "leave_type",
+      start: "start",
+      end: "end",
+      hours: "hours",
+      portion: "portion",
+    };
+    const inFile = dryRunImport(csv, "entries", map, world());
+    expect(inFile.ok).toBe(false);
+    expect(inFile.errors.some((row) => row.code === "OVERLAP")).toBe(true);
+
+    const existing = dryRunImport(
+      [
+        "email,leave_type,start,end,hours,portion",
+        "ada@example.com,vacation_unpaid,2026-03-02,2026-03-02,8.00,full",
+      ].join("\n"),
+      "entries",
+      map,
+      world({
+        occupancy: [
+          {
+            employeeId: ADA,
+            onDate: "2026-03-02",
+            portion: "am",
+            consumesBalance: true,
+            slotActive: true,
+            status: "approved",
+          },
+        ],
+      }),
+    );
+    expect(existing.ok).toBe(false);
+    expect(existing.errors.some((row) => row.code === "OVERLAP")).toBe(true);
+  });
+
+  it("skips usage when an import opening already exists for that year", () => {
+    const csv = [
+      "email,leave_type,start,end,hours,portion",
+      "ada@example.com,vacation_unpaid,2026-03-02,2026-03-02,8.00,full",
+    ].join("\n");
+    const result = dryRunImport(
+      csv,
+      "entries",
+      {
+        email: "email",
+        leave_type: "leave_type",
+        start: "start",
+        end: "end",
+        hours: "hours",
+        portion: "portion",
+      },
+      world({
+        ledger: [
+          {
+            employeeId: ADA,
+            leaveTypeId: VACATION,
+            kind: "adjustment",
+            minutes: 480,
+            effectiveOn: "2026-01-01",
+            periodYear: 2026,
+            reversedAt: null,
+            reason: IMPORT_OPENING_REASON,
+          },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.posts).toEqual([]);
+    expect(result.warnings.some((row) => row.code === "OPENING_PLUS_USAGE")).toBe(true);
   });
 
   it("unknown emails become error rows, not silent creates", () => {

@@ -5,7 +5,8 @@ import {
   type LedgerSumRow,
 } from "@/server/ledger/balance";
 import { expandToLeaveDays } from "@/server/leave/expand";
-import type { HolidayDate, Portion } from "@/server/policy/types";
+import { overlap } from "@/server/policy/rules/overlap";
+import type { ExistingLeave, HolidayDate, LeaveStatus, Portion } from "@/server/policy/types";
 import {
   IMPORT_OPENING_REASON,
   grantMapTargets,
@@ -38,9 +39,19 @@ export type ImportLeaveType = {
 };
 
 export type ImportPolicy = {
+  employeeId?: string;
   leaveTypeId: string;
   grantMode: string;
   grantMinutes: number | null;
+};
+
+export type ImportOccupancy = {
+  employeeId: string;
+  onDate: string;
+  portion: Portion;
+  consumesBalance: boolean;
+  slotActive: boolean;
+  status?: string;
 };
 
 export type ImportLedgerRow = LedgerSumRow & {
@@ -60,6 +71,7 @@ export type ImportWorld = {
   policies: ImportPolicy[];
   ledger: ImportLedgerRow[];
   holidays: HolidayDate[];
+  occupancy: ImportOccupancy[];
   plannedFirstYearGrants: PlannedFirstYearGrant[];
 };
 
@@ -85,7 +97,7 @@ export type PlannedHistoricalEntry = {
   customMinutes: number | null;
   totalMinutes: number;
   note: string | null;
-  status: "approved";
+  status: LeaveStatus;
   intent: "log";
   days: Array<{ onDate: string; minutes: number; portion: Portion; consumesBalance: boolean }>;
 };
@@ -225,15 +237,20 @@ function plannedFirstYearFor(
 
 export function planFirstYearSickGrants(world: Omit<ImportWorld, "plannedFirstYearGrants">): PlannedFirstYearGrant[] {
   const planned: PlannedFirstYearGrant[] = [];
-  const lumpTypes = new Set(
-    world.policies.filter((policy) => policy.grantMode === "lump_sum").map((policy) => policy.leaveTypeId),
-  );
+  const seen = new Set<string>();
   for (const employee of world.employees) {
-    for (const leaveType of world.leaveTypes) {
-      if (!leaveType.consumesBalance || !lumpTypes.has(leaveType.id)) continue;
+    for (const policy of world.policies) {
+      if (policy.grantMode !== "lump_sum") continue;
+      if (policy.employeeId && policy.employeeId !== employee.id) continue;
+      if (!policy.employeeId) continue;
+      const leaveType = world.leaveTypes.find((row) => row.id === policy.leaveTypeId);
+      if (!leaveType?.consumesBalance) continue;
       const periodYear = Number(employee.startDate.slice(0, 4));
+      const key = importOpeningKey(employee.id, leaveType.id, periodYear);
+      if (seen.has(key)) continue;
       if (hasImportOpening(world.ledger, employee.id, leaveType.id, periodYear)) continue;
       if (hasLiveGrantLump(world.ledger, employee.id, leaveType.id, periodYear)) continue;
+      seen.add(key);
       planned.push({
         employeeId: employee.id,
         leaveTypeId: leaveType.id,
@@ -374,6 +391,7 @@ function dryRunOpening(
     }
 
     const appRemaining = appRemainingMinutes(world, employee.id, leaveType.id, row.asOf);
+    const adjustmentMinutes = remaining.minutes - appRemaining;
     diffs.push({
       line: row.line,
       email: employee.email,
@@ -381,22 +399,28 @@ function dryRunOpening(
       asOf: row.asOf,
       sheetRemainingMinutes: remaining.minutes,
       appRemainingMinutes: appRemaining,
-      deltaMinutes: appRemaining - remaining.minutes,
+      deltaMinutes: adjustmentMinutes,
     });
 
+    const reason = row.notes
+      ? `${IMPORT_OPENING_REASON}: ${row.notes}`
+      : IMPORT_OPENING_REASON;
     posts.push({
       line: row.line,
       employeeId: employee.id,
       leaveTypeId: leaveType.id,
       kind: "adjustment",
-      minutes: remaining.minutes,
+      minutes: adjustmentMinutes,
       effectiveOn: row.asOf,
       periodYear,
-      reason: IMPORT_OPENING_REASON,
+      reason,
     });
   }
 
   errors.push(...assertOpeningPostsAreAdjustments(posts));
+  if (rows.length === 0 && errors.length === 0) {
+    errors.push({ line: 1, code: "EMPTY", message: "no data rows to import" });
+  }
   if (errors.length > 0) {
     return failResult("opening", headers, errors, warnings, { posts, diffs });
   }
@@ -413,6 +437,38 @@ function dryRunOpening(
   };
 }
 
+const HISTORICAL_STATUSES = new Set<LeaveStatus>(["approved", "rejected", "cancelled"]);
+
+function historicalStatus(raw: string | null): LeaveStatus | { error: string } {
+  if (!raw) return "approved";
+  const status = raw.trim().toLowerCase() as LeaveStatus;
+  if (!HISTORICAL_STATUSES.has(status)) {
+    return { error: `unknown status: ${raw.trim()} (use approved, rejected, or cancelled)` };
+  }
+  return status;
+}
+
+function occupancyAsExisting(world: ImportWorld, employeeId: string): ExistingLeave[] {
+  const days = (world.occupancy ?? []).filter(
+    (row) =>
+      row.employeeId === employeeId &&
+      row.slotActive &&
+      row.consumesBalance &&
+      row.status !== "rejected" &&
+      row.status !== "cancelled",
+  );
+  return days.map((day, index) => ({
+    id: `occ-${employeeId}-${index}`,
+    startDate: day.onDate,
+    endDate: day.onDate,
+    portion: day.portion,
+    consumesBalance: true,
+    status: day.status ?? "approved",
+    slotActive: true,
+    days: [{ onDate: day.onDate, portion: day.portion, consumesBalance: true, slotActive: true }],
+  }));
+}
+
 function dryRunEntries(
   headers: string[],
   rows: MappedEntryRow[],
@@ -422,6 +478,7 @@ function dryRunEntries(
 ): DryRunResult {
   const posts: PlannedLedgerPost[] = [];
   const entries: PlannedHistoricalEntry[] = [];
+  const plannedOccupancy: ImportOccupancy[] = [];
 
   for (const row of rows) {
     const employee = findEmployee(world, row.email);
@@ -432,6 +489,12 @@ function dryRunEntries(
     }
     if (!leaveType) {
       errors.push({ line: row.line, field: "leave_type", message: `unknown leave type: ${row.leaveType}` });
+      continue;
+    }
+
+    const status = historicalStatus(row.status);
+    if (typeof status === "object") {
+      errors.push({ line: row.line, field: "status", message: status.error });
       continue;
     }
 
@@ -466,6 +529,37 @@ function dryRunEntries(
       continue;
     }
 
+    const active = status === "approved";
+    if (active && leaveType.consumesBalance) {
+      const existing = [
+        ...occupancyAsExisting(world, employee.id),
+        ...plannedOccupancy
+          .filter((day) => day.employeeId === employee.id)
+          .map((day, index) => ({
+            id: `plan-${employee.id}-${index}`,
+            startDate: day.onDate,
+            endDate: day.onDate,
+            portion: day.portion,
+            consumesBalance: true,
+            status: "approved",
+            slotActive: true,
+            days: [{ onDate: day.onDate, portion: day.portion, consumesBalance: true, slotActive: true }],
+          })),
+      ];
+      const hit = overlap({
+        days,
+        consumesBalance: true,
+        existing,
+        holidays: world.holidays,
+        weekendDays: employee.weekendDays,
+        workdayMinutes,
+      });
+      if (hit) {
+        errors.push({ line: row.line, code: "OVERLAP", message: hit.message });
+        continue;
+      }
+    }
+
     const totalMinutes = days.reduce((sum, day) => sum + day.minutes, 0);
     entries.push({
       line: row.line,
@@ -477,7 +571,7 @@ function dryRunEntries(
       customMinutes,
       totalMinutes,
       note: row.note,
-      status: "approved",
+      status,
       intent: "log",
       days: days.map((day) => ({
         onDate: day.onDate,
@@ -487,22 +581,48 @@ function dryRunEntries(
       })),
     });
 
-    if (leaveType.consumesBalance) {
+    if (active && leaveType.consumesBalance) {
       for (const day of days) {
-        posts.push({
-          line: row.line,
+        plannedOccupancy.push({
           employeeId: employee.id,
-          leaveTypeId: leaveType.id,
-          kind: "usage",
-          minutes: day.minutes,
-          effectiveOn: day.onDate,
-          periodYear: periodYearFromAsOf(day.onDate, "UTC"),
-          reason: "import: historical entry",
+          onDate: day.onDate,
+          portion: day.portion,
+          consumesBalance: true,
+          slotActive: true,
+          status: "approved",
         });
+      }
+      const years = new Set(days.map((day) => periodYearFromAsOf(day.onDate, "UTC")));
+      const skipUsageYears = [...years].filter((year) =>
+        hasImportOpening(world.ledger, employee.id, leaveType.id, year),
+      );
+      if (skipUsageYears.length > 0) {
+        warnings.push({
+          line: row.line,
+          code: "OPENING_PLUS_USAGE",
+          message:
+            "skipping usage: import opening remaining already exists for this employee/type/year (do not import opening and used days for the same year)",
+        });
+      } else {
+        for (const day of days) {
+          posts.push({
+            line: row.line,
+            employeeId: employee.id,
+            leaveTypeId: leaveType.id,
+            kind: "usage",
+            minutes: day.minutes,
+            effectiveOn: day.onDate,
+            periodYear: periodYearFromAsOf(day.onDate, "UTC"),
+            reason: row.note ? `import: historical entry: ${row.note}` : "import: historical entry",
+          });
+        }
       }
     }
   }
 
+  if (rows.length === 0 && errors.length === 0) {
+    errors.push({ line: 1, code: "EMPTY", message: "no data rows to import" });
+  }
   if (errors.length > 0) {
     return failResult("entries", headers, errors, warnings, { posts, entries });
   }

@@ -1,7 +1,7 @@
 import { requireAdmin } from "@/server/auth";
 import { dbImportStore } from "@/server/import/commit";
-import { reverseImportAction } from "./actions";
 import { LeaveImportForm } from "./import-form";
+import { ReverseBatchForm } from "./reverse-batch-form";
 
 export default async function AdminImportPage() {
   const { employee } = await requireAdmin();
@@ -17,8 +17,9 @@ export default async function AdminImportPage() {
         </p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">CSV import</h1>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          Map columns, dry-run, then commit a reversible batch. Opening remaining is never a lump
-          grant.
+          Map columns, dry-run, then commit a reversible batch. Opening remaining posts sheet −
+          current app remaining as an adjustment, never a lump grant. Import opening remaining or
+          the same year&apos;s used days, not both.
         </p>
       </header>
 
@@ -52,14 +53,7 @@ export default async function AdminImportPage() {
                     <td className="py-2 pr-4">{batch.filename ?? ""}</td>
                     <td className="py-2 pr-4">{batch.reversedAt ? batch.reversedAt.toISOString() : ""}</td>
                     <td className="py-2">
-                      {batch.reversedAt ? null : (
-                        <form action={reverseImportAction}>
-                          <input type="hidden" name="batchId" value={batch.id} />
-                          <button className="text-red-600 underline" type="submit">
-                            Reverse
-                          </button>
-                        </form>
-                      )}
+                      {batch.reversedAt ? null : <ReverseBatchForm batchId={batch.id} />}
                     </td>
                   </tr>
                 ))

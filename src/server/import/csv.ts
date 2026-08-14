@@ -33,8 +33,6 @@ export type ImportField = OpeningField | EntryField;
 export const GRANT_MAP_TARGETS = new Set([
   "grant",
   "grant_lump",
-  "grant_hours",
-  "granted",
   "allotment",
   "lump",
   "lump_sum",
@@ -242,18 +240,29 @@ export function remainingFromOpening(input: {
 }):
   | { ok: true; minutes: number; source: "granted_minus_used" | "remaining_only"; dataLoss: boolean }
   | { ok: false; error: string } {
-  if (input.grantedHours != null && input.usedHours != null) {
+  const fromGranted =
+    input.grantedHours != null && input.usedHours != null
+      ? hoursToMinutes(input.grantedHours - input.usedHours)
+      : null;
+  const fromRemaining = input.remainingHours != null ? hoursToMinutes(input.remainingHours) : null;
+  if (fromGranted != null && fromRemaining != null && fromGranted !== fromRemaining) {
+    return {
+      ok: false,
+      error: `granted−used (${fromGranted} min) disagrees with remaining (${fromRemaining} min)`,
+    };
+  }
+  if (fromGranted != null) {
     return {
       ok: true,
-      minutes: hoursToMinutes(input.grantedHours - input.usedHours),
+      minutes: fromGranted,
       source: "granted_minus_used",
       dataLoss: false,
     };
   }
-  if (input.remainingHours != null) {
+  if (fromRemaining != null) {
     return {
       ok: true,
-      minutes: hoursToMinutes(input.remainingHours),
+      minutes: fromRemaining,
       source: "remaining_only",
       dataLoss: true,
     };
@@ -332,7 +341,10 @@ export function mapImportCsv(csv: string, kind: ImportKind, map: ColumnMap): Map
           line,
           field: "remaining_hours",
           code: "DATA_LOSS",
-          message: "remaining-only row; granted/used detail unknown",
+          message:
+            grantedHours != null
+              ? "granted without used; using remaining_hours only"
+              : "remaining-only row; granted/used detail unknown",
         });
       }
 

@@ -344,6 +344,11 @@ export const ledgerEntries = pgTable(
     uniqueIndex("ledger_grant_once")
       .on(t.employeeId, t.leaveTypeId, t.kind, t.periodYear, t.effectiveOn)
       .where(sql`${t.kind} IN ('grant_lump','accrual','carryover') AND ${t.reversedAt} IS NULL`),
+    uniqueIndex("ledger_import_opening_once")
+      .on(t.employeeId, t.leaveTypeId, t.periodYear)
+      .where(
+        sql`${t.kind} = 'adjustment' AND ${t.reversedAt} IS NULL AND ${t.reason} LIKE 'import: opening remaining%'`,
+      ),
     index("ledger_balance_idx").on(t.employeeId, t.leaveTypeId, t.effectiveOn),
   ],
 );

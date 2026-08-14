@@ -35,12 +35,15 @@ export type ImportFormState =
       ok: true;
       step: "committed";
       kind: ImportKind;
+      csv: string;
       posted: number;
       entries: number;
       batchId: string;
     }
-  | { ok: false; error: string; preview?: DryRunResult }
+  | { ok: false; error: string; csv?: string; preview?: DryRunResult }
   | undefined;
+
+export type ReverseFormState = { ok: true } | { ok: false; error: string } | undefined;
 
 function asKind(value: FormDataEntryValue | null): ImportKind {
   return value === "entries" ? "entries" : "opening";
@@ -133,26 +136,37 @@ export async function commitImportAction(
     dbImportStore,
   );
   if (!result.ok) {
-    return { ok: false, error: `${result.dryRun.errors.length} row error(s)`, preview: result.dryRun };
+    return {
+      ok: false,
+      error: `${result.dryRun.errors.length} row error(s)`,
+      csv,
+      preview: result.dryRun,
+    };
   }
   revalidatePath("/admin/import");
   return {
     ok: true,
     step: "committed",
     kind,
+    csv,
     posted: result.posted,
     entries: result.entries,
     batchId: result.batch.id,
   };
 }
 
-export async function reverseImportAction(formData: FormData): Promise<void> {
+export async function reverseImportAction(
+  _prev: ReverseFormState,
+  formData: FormData,
+): Promise<ReverseFormState> {
   const { employee } = await requireAdmin();
   const batchId = String(formData.get("batchId") ?? "");
-  if (!batchId) return;
-  await reverseImportBatch(
+  if (!batchId) return { ok: false, error: "import batch is required" };
+  const result = await reverseImportBatch(
     { orgId: employee.orgId, batchId, actor: { id: employee.id, role: "admin" } },
     dbImportStore,
   );
+  if (!result.ok) return { ok: false, error: result.error };
   revalidatePath("/admin/import");
+  return { ok: true };
 }

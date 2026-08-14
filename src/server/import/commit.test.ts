@@ -7,32 +7,35 @@ import {
   type ImportCommitStore,
   type ImportBatchRecord,
 } from "./commit";
-import type { ImportWorld, PlannedHistoricalEntry } from "./dry-run";
+import { dryRunImport, type ImportWorld, type PlannedHistoricalEntry } from "./dry-run";
 
 const ADA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const VACATION = "11111111-1111-4111-8111-111111111111";
 const ADMIN = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
-const world: ImportWorld = {
-  employees: [
-    {
-      id: ADA,
-      email: "ada@example.com",
-      name: "Ada",
-      startDate: "2026-01-15",
-      workdayMinutes: 480,
-      orgWorkdayMinutes: 480,
-      weekendDays: [6, 7],
-    },
-  ],
-  leaveTypes: [
-    { id: VACATION, code: "vacation_unpaid", name: "Vacation / Unpaid", consumesBalance: true },
-  ],
-  policies: [{ leaveTypeId: VACATION, grantMode: "periodic", grantMinutes: null }],
-  ledger: [],
-  holidays: [],
-  plannedFirstYearGrants: [],
-};
+function baseWorld(): ImportWorld {
+  return {
+    employees: [
+      {
+        id: ADA,
+        email: "ada@example.com",
+        name: "Ada",
+        startDate: "2026-01-15",
+        workdayMinutes: 480,
+        orgWorkdayMinutes: 480,
+        weekendDays: [6, 7],
+      },
+    ],
+    leaveTypes: [
+      { id: VACATION, code: "vacation_unpaid", name: "Vacation / Unpaid", consumesBalance: true },
+    ],
+    policies: [{ employeeId: ADA, leaveTypeId: VACATION, grantMode: "periodic", grantMinutes: null }],
+    ledger: [],
+    holidays: [],
+    occupancy: [],
+    plannedFirstYearGrants: [],
+  };
+}
 
 function memoryStore(): ImportCommitStore & {
   ledger: MemoryLedger;
@@ -42,25 +45,30 @@ function memoryStore(): ImportCommitStore & {
   const ledger = new MemoryLedger();
   const batches: ImportBatchRecord[] = [];
   const entries: PlannedHistoricalEntry[] = [];
+  const loadWorld = async (): Promise<ImportWorld> => ({
+    ...baseWorld(),
+    ledger: ledger.rows.map((row) => ({
+      employeeId: row.employeeId,
+      leaveTypeId: row.leaveTypeId,
+      kind: row.kind,
+      minutes: row.minutes,
+      effectiveOn: row.effectiveOn,
+      periodYear: row.periodYear,
+      reversedAt: row.reversedAt,
+      reason: row.reason,
+    })),
+  });
   return {
     ledger,
     batches,
     entries,
-    loadWorld: async () => ({
-      ...world,
-      ledger: ledger.rows.map((row) => ({
-        employeeId: row.employeeId,
-        leaveTypeId: row.leaveTypeId,
-        kind: row.kind,
-        minutes: row.minutes,
-        effectiveOn: row.effectiveOn,
-        periodYear: row.periodYear,
-        reversedAt: row.reversedAt,
-        reason: row.reason,
-      })),
-    }),
+    loadWorld,
     listBatches: async () => batches,
-    commitPlan: async (input) => {
+    applyCommit: async (input) => {
+      const first = dryRunImport(input.csv, input.kind, input.map, await loadWorld(), input.options);
+      if (!first.ok) return { ok: false, dryRun: first };
+      const dryRun = dryRunImport(input.csv, input.kind, input.map, await loadWorld(), input.options);
+      if (!dryRun.ok) return { ok: false, dryRun };
       const batch: ImportBatchRecord = {
         id: crypto.randomUUID(),
         orgId: input.orgId,
@@ -71,8 +79,7 @@ function memoryStore(): ImportCommitStore & {
         reversedAt: null,
       };
       batches.push(batch);
-      for (const post of input.posts) {
-        expect(post.kind).not.toBe("grant_lump");
+      for (const post of dryRun.posts) {
         ledger.post({
           employeeId: post.employeeId,
           leaveTypeId: post.leaveTypeId,
@@ -86,8 +93,8 @@ function memoryStore(): ImportCommitStore & {
           createdAt: input.now,
         });
       }
-      entries.push(...input.entries);
-      return batch;
+      entries.push(...dryRun.entries);
+      return { ok: true, batch, dryRun, posted: dryRun.posts.length, entries: dryRun.entries.length };
     },
     reverseBatch: async (input) => {
       const batch = batches.find((row) => row.id === input.batchId && row.orgId === input.orgId);
@@ -106,12 +113,27 @@ function memoryStore(): ImportCommitStore & {
   };
 }
 
+const openingMap = {
+  email: "email",
+  leave_type: "leave_type",
+  as_of: "as_of",
+  remaining_hours: "remaining_hours",
+};
+
 describe("commitImport / reverse", () => {
-  it("commits opening remaining as adjustment and reverses via reversal rows", async () => {
+  it("commits opening remaining as sheet−app adjustment and reverses via reversal rows", async () => {
     const store = memoryStore();
+    store.ledger.post({
+      employeeId: ADA,
+      leaveTypeId: VACATION,
+      kind: "adjustment",
+      minutes: 480,
+      effectiveOn: "2026-01-01",
+      createdBy: ADMIN,
+    });
     const csv = [
       "email,leave_type,as_of,remaining_hours",
-      "ada@example.com,vacation_unpaid,2026-03-01,8.00",
+      "ada@example.com,vacation_unpaid,2026-03-01,10.00",
     ].join("\n");
     const committed = await commitImport(
       {
@@ -119,12 +141,7 @@ describe("commitImport / reverse", () => {
         actor: { id: ADMIN, role: "admin" },
         kind: "opening",
         csv,
-        map: {
-          email: "email",
-          leave_type: "leave_type",
-          as_of: "as_of",
-          remaining_hours: "remaining_hours",
-        },
+        map: openingMap,
         filename: "balances.csv",
       },
       store,
@@ -132,14 +149,30 @@ describe("commitImport / reverse", () => {
     );
     expect(committed.ok).toBe(true);
     if (!committed.ok) return;
-    expect(store.ledger.rows).toHaveLength(1);
-    expect(store.ledger.rows[0]).toMatchObject({
+    const imported = store.ledger.rows.filter((row) => row.importBatchId === committed.batch.id);
+    expect(imported).toHaveLength(1);
+    expect(imported[0]).toMatchObject({
       kind: "adjustment",
-      minutes: 480,
+      minutes: 120,
       reason: IMPORT_OPENING_REASON,
-      importBatchId: committed.batch.id,
     });
+    expect(store.ledger.balance("2026-03-01", { employeeId: ADA, leaveTypeId: VACATION }).remainingMinutes).toBe(
+      600,
+    );
     expect(store.ledger.rows.some((row) => row.kind === "grant_lump")).toBe(false);
+
+    const again = await commitImport(
+      {
+        orgId: "org-1",
+        actor: { id: ADMIN, role: "admin" },
+        kind: "opening",
+        csv,
+        map: openingMap,
+      },
+      store,
+      { writeAudit: async () => {} },
+    );
+    expect(again.ok).toBe(false);
 
     const reversed = await reverseImportBatch(
       { orgId: "org-1", batchId: committed.batch.id, actor: { id: ADMIN, role: "admin" } },
@@ -149,10 +182,10 @@ describe("commitImport / reverse", () => {
     expect(reversed.ok).toBe(true);
     if (!reversed.ok) return;
     expect(reversed.reversedLedger).toBe(1);
-    expect(store.ledger.rows[0]?.reversedAt).not.toBeNull();
+    expect(imported[0]?.reversedAt).not.toBeNull();
     expect(store.ledger.rows.some((row) => row.kind === "reversal")).toBe(true);
     expect(store.ledger.balance("2026-03-01", { employeeId: ADA, leaveTypeId: VACATION }).remainingMinutes).toBe(
-      0,
+      480,
     );
   });
 
@@ -164,12 +197,7 @@ describe("commitImport / reverse", () => {
         actor: { id: ADMIN, role: "admin" },
         kind: "opening",
         csv: "email,leave_type,as_of,remaining_hours\nmissing@x.com,vacation_unpaid,2026-01-01,8",
-        map: {
-          email: "email",
-          leave_type: "leave_type",
-          as_of: "as_of",
-          remaining_hours: "remaining_hours",
-        },
+        map: openingMap,
       },
       store,
       { writeAudit: async () => {} },

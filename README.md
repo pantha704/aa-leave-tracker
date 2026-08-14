@@ -43,8 +43,8 @@ docker run --name aa-leave-postgres \
 | `bun dev` | Next.js dev server |
 | `bun run build` | Production build |
 | `bun start` | Serve the production build |
-| `bun run typecheck` | `tsc --noEmit` |
-| `bun test` | Vitest |
+| `bun run typecheck` | `next typegen && tsc --noEmit` |
+| `bun run test` | Vitest |
 | `bun run db:generate` | Drizzle Kit generate |
 
 Schema and auth land in later PRs. Do not commit `.env`.

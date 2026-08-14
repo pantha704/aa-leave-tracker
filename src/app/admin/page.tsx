@@ -30,6 +30,9 @@ export default async function AdminPage() {
         <a className="underline" href="/admin/import">
           CSV import
         </a>
+        <a className="underline" href="/admin/export">
+          CSV export
+        </a>
         <a className="underline" href="/admin/year-end">
           Year end
         </a>

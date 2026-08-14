@@ -39,7 +39,7 @@ export async function readJsonBody(
   try {
     return { ok: true, value: await request.json() };
   } catch {
-    return { ok: false, error: "invalid JSON body" };
+    return { ok: false, error: "invalid JSON" };
   }
 }
 

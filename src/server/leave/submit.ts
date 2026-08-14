@@ -60,7 +60,7 @@ import { expandToLeaveDays } from "./expand";
 const DECIMAL_HOURS = /^-?\d+(\.\d+)?$/;
 const PORTIONS = new Set<Portion>(["full", "am", "pm", "custom"]);
 
-export type LeaveFailStatus = 401 | 403 | 404 | 409 | 422;
+export type LeaveFailStatus = 401 | 403 | 404 | 409 | 422 | 423;
 
 export type LeaveFail = {
   ok: false;

@@ -413,6 +413,16 @@ describe("closed_period", () => {
       periodStatuses: [{ year: 2025, status: "open" }],
       ok: false,
     },
+    {
+      name: "allows a day in a future year (December requesting January)",
+      startDate: "2027-01-05",
+      endDate: "2027-01-05",
+      periodStatuses: [
+        { year: 2026, status: "open" },
+        { year: 2027, status: "future" },
+      ],
+      ok: true,
+    },
   ])("$name", ({ startDate, endDate, periodStatuses, ok }) => {
     const result = evaluate({
       entry: { startDate, endDate, portion: "full", consumesBalance: true },

@@ -28,7 +28,7 @@ import { MemoryLedger } from "@/server/ledger/memory";
 import {
   acquireEmployeeLock,
   postLedgerEntryInTx,
-  reverseLedgerEntry,
+  reverseLedgerEntryInTx,
   type LedgerSession,
   type PostLedgerInput,
 } from "@/server/ledger/post";
@@ -147,6 +147,22 @@ export type YearEndResult =
 export type CloseYearOptions = {
   acknowledgeForfeit?: boolean;
 };
+
+export type CloseYearHooks = {
+  /** Test hook: runs after `closing` is committed, before unused is recomputed under locks. */
+  afterMarkClosing?: () => Promise<void> | void;
+};
+
+export type ReopenYearHooks = {
+  /** Test hook: runs after the first reopen plan, before the in-tx re-check. */
+  afterPlan?: () => Promise<void> | void;
+};
+
+export function parseCalendarYear(raw: string | number): number | null {
+  const value = typeof raw === "number" ? raw : Number(String(raw).trim());
+  if (!Number.isInteger(value) || value < 2000 || value > 2100) return null;
+  return value;
+}
 
 export function assignmentCovers(
   assignment: Pick<YearEndAssignment, "validFrom" | "validTo">,
@@ -283,6 +299,46 @@ export function canStartClose(status: string | null | undefined): boolean {
   return status === "open" || status === "closing";
 }
 
+export function canFirstYearOpen(periods: Map<number, PolicyPeriodStatus>, year: number): string | null {
+  const status = periods.get(year) ?? null;
+  if (status === "closed" || status === "closing") {
+    return `period ${year} is ${status}; reopen or wait`;
+  }
+  const otherBusy = [...periods.entries()].some(
+    ([otherYear, otherStatus]) =>
+      otherYear !== year && (otherStatus === "open" || otherStatus === "closing" || otherStatus === "closed"),
+  );
+  if (otherBusy) {
+    return `cannot first-year open ${year} while another year is already in use; close ${year - 1} instead`;
+  }
+  if (status === "open") return null;
+  const anyBusy = [...periods.values()].some(
+    (otherStatus) => otherStatus === "open" || otherStatus === "closing" || otherStatus === "closed",
+  );
+  if (anyBusy) {
+    return `cannot first-year open ${year} while another year is already in use`;
+  }
+  return null;
+}
+
+function previewKey(employeeId: string, leaveTypeId: string): string {
+  return `${employeeId}\0${leaveTypeId}`;
+}
+
+function emptyPreview(employee: YearEndEmployee, leaveType: YearEndLeaveType): ClosePreviewRow {
+  return {
+    employeeId: employee.id,
+    employeeName: employee.name,
+    leaveTypeId: leaveType.id,
+    leaveTypeCode: leaveType.code,
+    unusedMinutes: 0,
+    carryMinutes: 0,
+    forfeitMinutes: 0,
+    sickGrantMinutes: 0,
+    writesVacationLump: false,
+  };
+}
+
 export function planYearClose(
   world: YearEndWorld,
   year: number,
@@ -305,11 +361,12 @@ export function planYearClose(
   const nextStart = `${nextYear}-01-01`;
   const policies = policyById(world);
   const types = typeById(world);
-  const preview: ClosePreviewRow[] = [];
+  const previewByKey = new Map<string, ClosePreviewRow>();
   const posts: PlannedLedgerPost[] = [];
   const reason = closeReason(year);
 
   for (const employee of world.employees) {
+    if (!employee.active) continue;
     if (employee.endDate != null && employee.endDate < nextStart) continue;
 
     const covering = world.assignments.filter(
@@ -318,7 +375,7 @@ export function planYearClose(
     for (const assignment of covering) {
       const policy = policies.get(assignment.policyId);
       const leaveType = types.get(assignment.leaveTypeId);
-      if (!policy || !leaveType) continue;
+      if (!policy || !leaveType || !leaveType.consumesBalance) continue;
 
       const rows = scopedLedger(world, employee.id, leaveType.id);
       const unused = unusedMinutesInPeriod(rows, year);
@@ -327,43 +384,6 @@ export function planYearClose(
         carryoverMaxMinutes: policy.carryoverMaxMinutes,
         allowForfeit: Boolean(policy.allowForfeit && options.acknowledgeForfeit),
       });
-
-      let sickGrantMinutes = 0;
-      const nextAssignment = world.assignments.find(
-        (row) =>
-          row.employeeId === employee.id &&
-          row.leaveTypeId === assignment.leaveTypeId &&
-          assignmentCovers(row, nextStart),
-      );
-      const nextPolicy = nextAssignment ? policies.get(nextAssignment.policyId) : undefined;
-      if (
-        nextPolicy?.grantMode === "lump_sum" &&
-        nextPolicy.grantMinutes != null &&
-        employeeActiveOn(employee, nextStart) &&
-        !hasImportOpening(world.ledger, employee.id, leaveType.id, nextYear)
-      ) {
-        const planned = planSickAllotment({
-          grantMinutes: nextPolicy.grantMinutes,
-          startDate: employee.startDate,
-          year: nextYear,
-          weekendDays: world.weekendDays,
-          holidays: world.holidays,
-        });
-        if (
-          planned &&
-          !liveGrantExists(world.ledger, employee.id, leaveType.id, "grant_lump", nextYear, planned.effectiveOn)
-        ) {
-          sickGrantMinutes = planned.minutes;
-          posts.push({
-            employeeId: employee.id,
-            leaveTypeId: leaveType.id,
-            kind: "grant_lump",
-            minutes: planned.minutes,
-            effectiveOn: planned.effectiveOn,
-            reason,
-          });
-        }
-      }
 
       if (
         carryMinutes > 0 &&
@@ -389,21 +409,55 @@ export function planYearClose(
         });
       }
 
-      preview.push({
-        employeeId: employee.id,
-        employeeName: employee.name,
-        leaveTypeId: leaveType.id,
-        leaveTypeCode: leaveType.code,
+      previewByKey.set(previewKey(employee.id, leaveType.id), {
+        ...emptyPreview(employee, leaveType),
         unusedMinutes: unused,
         carryMinutes,
         forfeitMinutes,
-        sickGrantMinutes,
-        writesVacationLump: false,
       });
     }
   }
 
-  return { ok: true, plan: { year, nextYear, preview, posts } };
+  for (const employee of world.employees) {
+    if (!employeeActiveOn(employee, nextStart)) continue;
+    const covering = world.assignments.filter(
+      (assignment) => assignment.employeeId === employee.id && assignmentCovers(assignment, nextStart),
+    );
+    for (const assignment of covering) {
+      const policy = policies.get(assignment.policyId);
+      const leaveType = types.get(assignment.leaveTypeId);
+      if (!policy || !leaveType || !leaveType.consumesBalance) continue;
+      if (policy.grantMode !== "lump_sum" || policy.grantMinutes == null) continue;
+      if (hasImportOpening(world.ledger, employee.id, leaveType.id, nextYear)) continue;
+      const planned = planSickAllotment({
+        grantMinutes: policy.grantMinutes,
+        startDate: employee.startDate,
+        year: nextYear,
+        weekendDays: world.weekendDays,
+        holidays: world.holidays,
+      });
+      if (!planned) continue;
+      if (liveGrantExists(world.ledger, employee.id, leaveType.id, "grant_lump", nextYear, planned.effectiveOn)) {
+        continue;
+      }
+      posts.push({
+        employeeId: employee.id,
+        leaveTypeId: leaveType.id,
+        kind: "grant_lump",
+        minutes: planned.minutes,
+        effectiveOn: planned.effectiveOn,
+        reason,
+      });
+      const key = previewKey(employee.id, leaveType.id);
+      const existing = previewByKey.get(key) ?? emptyPreview(employee, leaveType);
+      previewByKey.set(key, { ...existing, sickGrantMinutes: planned.minutes });
+    }
+  }
+
+  return {
+    ok: true,
+    plan: { year, nextYear, preview: [...previewByKey.values()], posts },
+  };
 }
 
 export function planFirstYearOpen(
@@ -413,10 +467,8 @@ export function planFirstYearOpen(
   if (!Number.isInteger(year)) {
     return { ok: false, error: "year must be an integer" };
   }
-  const status = world.periods.get(year) ?? null;
-  if (status === "closed" || status === "closing") {
-    return { ok: false, error: `period ${year} is ${status}; reopen or wait` };
-  }
+  const blocked = canFirstYearOpen(world.periods, year);
+  if (blocked) return { ok: false, error: blocked };
 
   const { yearStart } = calendarYearBounds(year);
   const policies = policyById(world);
@@ -436,7 +488,7 @@ export function planFirstYearOpen(
     for (const assignment of covering) {
       const policy = policies.get(assignment.policyId);
       const leaveType = types.get(assignment.leaveTypeId);
-      if (!policy || !leaveType) continue;
+      if (!policy || !leaveType || !leaveType.consumesBalance) continue;
       if (policy.grantMode !== "lump_sum" || policy.grantMinutes == null) continue;
       if (hasImportOpening(world.ledger, employee.id, leaveType.id, year)) continue;
       const planned = planSickAllotment({
@@ -483,6 +535,10 @@ export function planReopen(
     return { ok: false, error: `period ${year} must be closed to reopen` };
   }
   const nextYear = year + 1;
+  const nextStatus = world.periods.get(nextYear);
+  if (nextStatus === "closed" || nextStatus === "closing") {
+    return { ok: false, error: `period ${nextYear} is ${nextStatus}; cannot reopen ${year}` };
+  }
   const blockers = liveNonCloseActivity(world.ledger, nextYear, year);
   if (blockers.length > 0) {
     return {
@@ -534,6 +590,43 @@ export function applyReopenPeriods(periods: Map<number, PolicyPeriodStatus>, yea
 
 export function applyOpenPeriod(periods: Map<number, PolicyPeriodStatus>, year: number): void {
   periods.set(year, "open");
+  if (!periods.has(year + 1)) {
+    periods.set(year + 1, "future");
+  }
+}
+
+function lockEmployeeIds(world: YearEndWorld): string[] {
+  return [...new Set(world.employees.map((employee) => employee.id))].sort();
+}
+
+export function executeCloseOnWorld(
+  world: YearEndWorld,
+  year: number,
+  options: CloseYearOptions = {},
+  hooks?: { afterMarkClosing?: (world: YearEndWorld) => void },
+): { ok: true; plan: ClosePlan } | { ok: false; error: string } {
+  const pre = planYearClose(world, year, options);
+  if (!pre.ok) return pre;
+  world.periods.set(year, "closing");
+  hooks?.afterMarkClosing?.(world);
+  const planned = planYearClose(world, year, options);
+  if (!planned.ok) return planned;
+  applyClosePeriods(world.periods, year);
+  return planned;
+}
+
+export function executeReopenOnWorld(
+  world: YearEndWorld,
+  year: number,
+  hooks?: { afterPlan?: (world: YearEndWorld) => void },
+): { ok: true; reverseIds: string[] } | { ok: false; error: string } {
+  const first = planReopen(world, year);
+  if (!first.ok) return first;
+  hooks?.afterPlan?.(world);
+  const planned = planReopen(world, year);
+  if (!planned.ok) return planned;
+  applyReopenPeriods(world.periods, year);
+  return planned;
 }
 
 export function snapshotPayload(orgId: string, plan: ClosePlan, closedAt: string) {
@@ -811,19 +904,41 @@ export async function closeYear(
   options: CloseYearOptions = {},
   db: LedgerSession = getDb(),
   writeAudit: AuditWriter = writeAuditEvent,
+  hooks: CloseYearHooks = {},
 ): Promise<YearEndResult & { plan?: ClosePlan; snapshot?: { sha256: string; path: string } }> {
-  const world = await loadYearEndWorld(db, orgId);
-  const planned = planYearClose(world, year, options);
-  if (!planned.ok) return { ok: false, error: planned.error, status: 400 };
-
-  const closedAt = new Date();
-  const payload = snapshotPayload(orgId, planned.plan, closedAt.toISOString());
-  const snapshot = await writeYearEndSnapshotFile(orgId, year, payload);
+  const preWorld = await loadYearEndWorld(db, orgId);
+  const pre = planYearClose(preWorld, year, options);
+  if (!pre.ok) return { ok: false, error: pre.error, status: 400 };
 
   try {
     await db.transaction(async (tx) => {
       await upsertPeriod(tx, orgId, year, "closing");
-      await postPlanned(tx, planned.plan.posts, actorId, closedAt);
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "close failed";
+    return { ok: false, error: message, status: 409 };
+  }
+
+  await hooks.afterMarkClosing?.();
+
+  const closedAt = new Date();
+  let plan: ClosePlan | undefined;
+  let snapshot: { sha256: string; path: string } | undefined;
+
+  try {
+    await db.transaction(async (tx) => {
+      for (const employeeId of lockEmployeeIds(preWorld)) {
+        await acquireEmployeeLock(tx, employeeId);
+      }
+      const world = await loadYearEndWorld(tx, orgId);
+      const planned = planYearClose(world, year, options);
+      if (!planned.ok) {
+        throw new Error(planned.error);
+      }
+      plan = planned.plan;
+      const payload = snapshotPayload(orgId, plan, closedAt.toISOString());
+      snapshot = await writeYearEndSnapshotFile(orgId, year, payload);
+      await postPlanned(tx, plan.posts, actorId, closedAt);
       await upsertPeriod(tx, orgId, year, "closed", { at: closedAt, by: actorId });
       await upsertPeriod(tx, orgId, year + 1, "open", null);
       await persistSnapshot(tx, orgId, year, snapshot.sha256, snapshot.path, closedAt);
@@ -839,9 +954,9 @@ export async function closeYear(
     action: "year_end.closed",
     entityType: "policy_period",
     entityId: orgId,
-    after: { year, nextYear: year + 1, snapshot, posts: planned.plan.posts.length },
+    after: { year, nextYear: year + 1, snapshot, posts: plan?.posts.length ?? 0 },
   });
-  return { ok: true, plan: planned.plan, snapshot };
+  return { ok: true, plan, snapshot };
 }
 
 export async function reopenYear(
@@ -850,18 +965,37 @@ export async function reopenYear(
   actorId: string,
   db: LedgerSession = getDb(),
   writeAudit: AuditWriter = writeAuditEvent,
+  hooks: ReopenYearHooks = {},
 ): Promise<YearEndResult & { reversed?: number }> {
-  const world = await loadYearEndWorld(db, orgId);
-  const planned = planReopen(world, year);
-  if (!planned.ok) return { ok: false, error: planned.error, status: 400 };
+  const preWorld = await loadYearEndWorld(db, orgId);
+  const pre = planReopen(preWorld, year);
+  if (!pre.ok) return { ok: false, error: pre.error, status: 400 };
 
+  await hooks.afterPlan?.();
+
+  let reversed = 0;
   try {
-    for (const id of planned.reverseIds) {
-      await reverseLedgerEntry(db, { id, createdBy: actorId, reason: reopenReason(year) });
-    }
     await db.transaction(async (tx) => {
+      for (const employeeId of lockEmployeeIds(preWorld)) {
+        await acquireEmployeeLock(tx, employeeId);
+      }
+      const world = await loadYearEndWorld(tx, orgId);
+      const planned = planReopen(world, year);
+      if (!planned.ok) {
+        throw new Error(planned.error);
+      }
+      reversed = planned.reverseIds.length;
+      for (const id of planned.reverseIds) {
+        await reverseLedgerEntryInTx(tx, {
+          id,
+          createdBy: actorId,
+          reason: reopenReason(year),
+        });
+      }
       await upsertPeriod(tx, orgId, year, "open", null);
-      await upsertPeriod(tx, orgId, year + 1, "future", null);
+      if (world.periods.get(year + 1) === "open") {
+        await upsertPeriod(tx, orgId, year + 1, "future", null);
+      }
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "reopen failed";
@@ -873,9 +1007,9 @@ export async function reopenYear(
     action: "year_end.reopened",
     entityType: "policy_period",
     entityId: orgId,
-    after: { year, reversed: planned.reverseIds.length },
+    after: { year, reversed },
   });
-  return { ok: true, reversed: planned.reverseIds.length };
+  return { ok: true, reversed };
 }
 
 export async function openFirstYear(
@@ -893,6 +1027,7 @@ export async function openFirstYear(
   try {
     await db.transaction(async (tx) => {
       await upsertPeriod(tx, orgId, year, "open", null);
+      await upsertPeriod(tx, orgId, year + 1, "future", null);
       await postPlanned(tx, planned.posts, actorId, createdAt);
     });
   } catch (err) {

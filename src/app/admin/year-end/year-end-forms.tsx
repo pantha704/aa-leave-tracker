@@ -73,8 +73,9 @@ export function YearEndForms({ defaultYear }: { defaultYear: number }) {
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">First-year open</h2>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Opens the period and grants Sick 3-day allotment (prorated for mid-year hires). Does not
-          write a 17-day Vacation/Unpaid lump.
+          After seed: assign policies, then open the <em>same</em> year (grants Sick). Refuses if
+          another year is already open. Inserts Y+1 as <span className="font-mono">future</span> so
+          December can request January. Does not write a 17-day Vacation/Unpaid lump.
         </p>
         <form action={openYear} className="flex flex-wrap items-end gap-3">
           <YearField defaultYear={defaultYear} />
@@ -86,21 +87,29 @@ export function YearEndForms({ defaultYear }: { defaultYear: number }) {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Close preview</h2>
+        <h2 className="text-lg font-medium">Close year</h2>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Carryover only. Forfeit stays off unless the policy flag is on and you acknowledge below.
+          Preview then close with the same forfeit acknowledgement. Finish before the first January
+          working day. Carryover only — unused above the cap is not deleted unless the policy allows
+          forfeit and you acknowledge (legal call is HR&apos;s).
         </p>
-        <form action={preview} className="flex flex-wrap items-end gap-3">
-          <YearField defaultYear={defaultYear} />
-          <label className="flex items-center gap-2 text-sm">
-            <input name="acknowledge_forfeit" type="checkbox" />
-            Acknowledge forfeit (legal call is HR&apos;s)
-          </label>
-          <button className={buttonClass} type="submit" disabled={previewPending}>
-            Preview close
-          </button>
+        <form className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <YearField defaultYear={defaultYear} />
+            <label className="flex items-center gap-2 text-sm">
+              <input name="acknowledge_forfeit" type="checkbox" />
+              Acknowledge forfeit
+            </label>
+            <button className={buttonClass} type="submit" formAction={preview} disabled={previewPending}>
+              Preview close
+            </button>
+            <button className={buttonClass} type="submit" formAction={close} disabled={closePending}>
+              Close year
+            </button>
+          </div>
         </form>
         <FormAlert state={previewState} />
+        <FormAlert state={closeState} />
         {previewRows.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left text-sm">
@@ -132,25 +141,6 @@ export function YearEndForms({ defaultYear }: { defaultYear: number }) {
             </table>
           </div>
         ) : null}
-      </section>
-
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Close year</h2>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Admin action — not an implicit January 1 job. Finish this before the first January working
-          day.
-        </p>
-        <form action={close} className="flex flex-wrap items-end gap-3">
-          <YearField defaultYear={defaultYear} />
-          <label className="flex items-center gap-2 text-sm">
-            <input name="acknowledge_forfeit" type="checkbox" />
-            Acknowledge forfeit
-          </label>
-          <button className={buttonClass} type="submit" disabled={closePending}>
-            Close year
-          </button>
-        </form>
-        <FormAlert state={closeState} />
       </section>
 
       <section className="flex flex-col gap-3">

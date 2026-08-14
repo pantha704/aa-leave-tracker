@@ -212,41 +212,45 @@ export async function postLedgerEntry(db: LedgerSession, input: PostLedgerInput)
   });
 }
 
+export async function reverseLedgerEntryInTx(
+  tx: LedgerTx,
+  input: ReverseLedgerInput,
+): Promise<{ original: LedgerRow; reversal: LedgerRow }> {
+  const found = await tx.select().from(ledgerEntries).where(eq(ledgerEntries.id, input.id));
+  const original = found[0];
+  if (!original) {
+    throw new Error(`ledger row not found: ${input.id}`);
+  }
+
+  await acquireEmployeeLock(tx, original.employeeId);
+
+  const prepared = prepareReversal(
+    {
+      ...original,
+      kind: original.kind as LedgerKind,
+    },
+    input,
+  );
+
+  const updated = await tx
+    .update(ledgerEntries)
+    .set({ reversedAt: prepared.reversedAt })
+    .where(and(eq(ledgerEntries.id, original.id), isNull(ledgerEntries.reversedAt)))
+    .returning();
+  const reversedOriginal = updated[0];
+  if (!reversedOriginal) {
+    throw new Error("ledger row already reversed");
+  }
+
+  const reversal = await insertPrepared(tx, prepared.reversal);
+  return { original: reversedOriginal, reversal };
+}
+
 export async function reverseLedgerEntry(
   db: LedgerSession,
   input: ReverseLedgerInput,
 ): Promise<{ original: LedgerRow; reversal: LedgerRow }> {
-  return db.transaction(async (tx) => {
-    const locked = tx as unknown as LedgerTx;
-    const found = await locked.select().from(ledgerEntries).where(eq(ledgerEntries.id, input.id));
-    const original = found[0];
-    if (!original) {
-      throw new Error(`ledger row not found: ${input.id}`);
-    }
-
-    await acquireEmployeeLock(locked, original.employeeId);
-
-    const prepared = prepareReversal(
-      {
-        ...original,
-        kind: original.kind as LedgerKind,
-      },
-      input,
-    );
-
-    const updated = await locked
-      .update(ledgerEntries)
-      .set({ reversedAt: prepared.reversedAt })
-      .where(and(eq(ledgerEntries.id, original.id), isNull(ledgerEntries.reversedAt)))
-      .returning();
-    const reversedOriginal = updated[0];
-    if (!reversedOriginal) {
-      throw new Error("ledger row already reversed");
-    }
-
-    const reversal = await insertPrepared(locked, prepared.reversal);
-    return { original: reversedOriginal, reversal };
-  });
+  return db.transaction(async (tx) => reverseLedgerEntryInTx(tx as unknown as LedgerTx, input));
 }
 
 /**

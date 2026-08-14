@@ -4,7 +4,12 @@ import {
   requireAdminApi,
   type AdminGateDeps,
 } from "@/server/admin-api";
-import { previewCloseYear, type ClosePlan, type CloseYearOptions } from "@/server/year-end";
+import {
+  parseCalendarYear,
+  previewCloseYear,
+  type ClosePlan,
+  type CloseYearOptions,
+} from "@/server/year-end";
 
 export type PreviewYearDeps = AdminGateDeps & {
   preview: (
@@ -20,9 +25,7 @@ const defaultDeps: PreviewYearDeps = {
 };
 
 export function parseYearParam(year: string): number | null {
-  const value = Number(year);
-  if (!Number.isInteger(value)) return null;
-  return value;
+  return parseCalendarYear(year);
 }
 
 export async function getAdminYearPreview(

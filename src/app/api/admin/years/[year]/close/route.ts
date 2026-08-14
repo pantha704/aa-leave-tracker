@@ -7,6 +7,7 @@ import {
 } from "@/server/admin-api";
 import {
   closeYear,
+  parseCalendarYear,
   type ClosePlan,
   type CloseYearOptions,
   type YearEndResult,
@@ -27,9 +28,7 @@ const defaultDeps: CloseYearDeps = {
 };
 
 function parseYearParam(year: string): number | null {
-  const value = Number(year);
-  if (!Number.isInteger(value)) return null;
-  return value;
+  return parseCalendarYear(year);
 }
 
 export async function postAdminYearClose(

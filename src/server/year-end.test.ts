@@ -13,7 +13,10 @@ import {
   applyPlannedPostsToMemory,
   applyReopenPeriods,
   computeCarryAndForfeit,
+  executeCloseOnWorld,
+  executeReopenOnWorld,
   isPeriodOpen,
+  parseCalendarYear,
   planFirstYearOpen,
   planReopen,
   planSickAllotment,
@@ -346,7 +349,245 @@ describe("first-year open", () => {
     expect(planned.posts.some((post) => post.leaveTypeId === vacationId)).toBe(false);
     applyOpenPeriod(periods, 2026);
     expect(periods.get(2026)).toBe("open");
+    expect(periods.get(2027)).toBe("future");
     expect(isPeriodOpen(periods.get(2026))).toBe(true);
+  });
+
+  it("refuses to open Y+1 while Y is already open", () => {
+    const planned = planFirstYearOpen(baseWorld(), 2027);
+    expect(planned.ok).toBe(false);
+  });
+});
+
+describe("close unused is recomputed after closing is marked", () => {
+  it("usage posted after the first plan reduces carry", () => {
+    const ledger = new MemoryLedger();
+    ledger.post({
+      employeeId,
+      leaveTypeId: vacationId,
+      kind: "accrual",
+      minutes: 2000,
+      effectiveOn: "2026-01-01",
+      createdBy: actor,
+    });
+    const world = worldFromLedger(ledger, new Map([[2026, "open"]]));
+    const planned = executeCloseOnWorld(world, 2026, {}, {
+      afterMarkClosing: (current) => {
+        expect(current.periods.get(2026)).toBe("closing");
+        ledger.post({
+          employeeId,
+          leaveTypeId: vacationId,
+          kind: "usage",
+          minutes: 480,
+          effectiveOn: "2026-12-15",
+          createdBy: actor,
+        });
+        current.ledger = ledger.rows.map((row) => ({
+          id: row.id,
+          kind: row.kind,
+          minutes: row.minutes,
+          effectiveOn: row.effectiveOn,
+          periodYear: row.periodYear,
+          reversedAt: row.reversedAt,
+          employeeId: row.employeeId,
+          leaveTypeId: row.leaveTypeId,
+          reason: row.reason,
+        }));
+      },
+    });
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    const carry = planned.plan.posts.find((post) => post.kind === "carryover" && post.leaveTypeId === vacationId);
+    expect(carry?.minutes).toBe(1520);
+    expect(world.periods.get(2026)).toBe("closed");
+  });
+});
+
+describe("reopen re-checks live activity before flipping periods", () => {
+  it("refuses when accrual lands after the first plan and leaves Y+1 open", () => {
+    const ledger = new MemoryLedger();
+    ledger.post({
+      employeeId,
+      leaveTypeId: vacationId,
+      kind: "carryover",
+      minutes: 480,
+      effectiveOn: "2027-01-01",
+      reason: "close:2026",
+      createdBy: actor,
+    });
+    const world = worldFromLedger(
+      ledger,
+      new Map([
+        [2026, "closed"],
+        [2027, "open"],
+      ]),
+    );
+    const result = executeReopenOnWorld(world, 2026, {
+      afterPlan: (current) => {
+        ledger.post({
+          employeeId,
+          leaveTypeId: vacationId,
+          kind: "accrual",
+          minutes: DEMO_VACATION_PERIODIC_MINUTES,
+          effectiveOn: "2027-01-01",
+          reason: "accrual:2027-01-01",
+          createdBy: actor,
+        });
+        current.ledger = ledger.rows.map((row) => ({
+          id: row.id,
+          kind: row.kind,
+          minutes: row.minutes,
+          effectiveOn: row.effectiveOn,
+          periodYear: row.periodYear,
+          reversedAt: row.reversedAt,
+          employeeId: row.employeeId,
+          leaveTypeId: row.leaveTypeId,
+          reason: row.reason,
+        }));
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(world.periods.get(2026)).toBe("closed");
+    expect(world.periods.get(2027)).toBe("open");
+  });
+});
+
+describe("sick grant for Jan 1 Y+1 hires", () => {
+  it("posts 1440 grant_lump tagged close:2026 for a 2027-01-01 hire", () => {
+    const hireId = "66666666-6666-6666-6666-666666666666";
+    const world = baseWorld({
+      employees: [
+        {
+          id: hireId,
+          name: "Bea",
+          active: true,
+          startDate: "2027-01-01",
+          endDate: null,
+        },
+      ],
+      assignments: [
+        {
+          employeeId: hireId,
+          policyId: sickPolicyId,
+          leaveTypeId: sickId,
+          validFrom: "2027-01-01",
+          validTo: null,
+        },
+      ],
+    });
+    const planned = planYearClose(world, 2026);
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    const sick = planned.plan.posts.filter((post) => post.kind === "grant_lump" && post.leaveTypeId === sickId);
+    expect(sick).toEqual([
+      {
+        employeeId: hireId,
+        leaveTypeId: sickId,
+        kind: "grant_lump",
+        minutes: DEMO_SICK_GRANT_MINUTES,
+        effectiveOn: "2027-01-01",
+        reason: "close:2026",
+      },
+    ]);
+  });
+});
+
+describe("close skips non-consuming types and inactive employees", () => {
+  it("does not write carryover for WFH/unlimited", () => {
+    const wfhId = "77777777-7777-7777-7777-777777777777";
+    const wfhPolicyId = "88888888-8888-8888-8888-888888888888";
+    const ledger = new MemoryLedger();
+    ledger.post({
+      employeeId,
+      leaveTypeId: wfhId,
+      kind: "adjustment",
+      minutes: 480,
+      effectiveOn: "2026-01-01",
+      createdBy: actor,
+    });
+    const world = worldFromLedger(ledger, new Map([[2026, "open"]]));
+    world.leaveTypes = [...world.leaveTypes, { id: wfhId, code: "wfh", consumesBalance: false }];
+    world.policies = [
+      ...world.policies,
+      {
+        id: wfhPolicyId,
+        leaveTypeId: wfhId,
+        grantMode: "none",
+        grantMinutes: null,
+        periodicCadence: null,
+        periodicMinutes: null,
+        carryoverMaxMinutes: null,
+        allowForfeit: false,
+        accrualStopMinutes: null,
+      },
+    ];
+    world.assignments = [
+      ...world.assignments,
+      {
+        employeeId,
+        policyId: wfhPolicyId,
+        leaveTypeId: wfhId,
+        validFrom: "2026-01-01",
+        validTo: null,
+      },
+    ];
+    const planned = planYearClose(world, 2026);
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(planned.plan.posts.some((post) => post.leaveTypeId === wfhId)).toBe(false);
+    expect(planned.plan.preview.some((row) => row.leaveTypeId === wfhId)).toBe(false);
+  });
+
+  it("does not carry unused for an inactive employee", () => {
+    const ledger = new MemoryLedger();
+    ledger.post({
+      employeeId,
+      leaveTypeId: vacationId,
+      kind: "accrual",
+      minutes: 2000,
+      effectiveOn: "2026-01-01",
+      createdBy: actor,
+    });
+    const world = worldFromLedger(ledger, new Map([[2026, "open"]]));
+    world.employees = world.employees.map((employee) => ({ ...employee, active: false }));
+    const planned = planYearClose(world, 2026);
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(planned.plan.posts.filter((post) => post.kind === "carryover")).toHaveLength(0);
+  });
+});
+
+describe("forfeit requires policy flag and acknowledgement", () => {
+  it("posts no forfeit when allow_forfeit is true but ack is omitted", () => {
+    const ledger = new MemoryLedger();
+    ledger.post({
+      employeeId,
+      leaveTypeId: vacationId,
+      kind: "accrual",
+      minutes: 2000,
+      effectiveOn: "2026-01-01",
+      createdBy: actor,
+    });
+    const world = worldFromLedger(ledger, new Map([[2026, "open"]]));
+    world.policies = world.policies.map((policy) =>
+      policy.id === vacationPolicyId
+        ? { ...policy, carryoverMaxMinutes: 480, allowForfeit: true }
+        : policy,
+    );
+    const planned = planYearClose(world, 2026);
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(planned.plan.posts.some((post) => post.kind === "forfeit")).toBe(false);
+    expect(planned.plan.preview.find((row) => row.leaveTypeId === vacationId)?.forfeitMinutes).toBe(0);
+  });
+});
+
+describe("parseCalendarYear", () => {
+  it("rejects empty, scientific notation below 2000, and out of range", () => {
+    expect(parseCalendarYear("")).toBeNull();
+    expect(parseCalendarYear("1e3")).toBeNull();
+    expect(parseCalendarYear(1999)).toBeNull();
+    expect(parseCalendarYear("2026")).toBe(2026);
   });
 });
 

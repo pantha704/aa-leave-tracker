@@ -4,7 +4,9 @@ import {
   monthStartInZone,
   monthlyAccrualMinutes,
   planMonthlyAccrual,
+  runMonthlyAccrual,
   shouldPostMonthlyAccrual,
+  type AccrualJobSource,
 } from "./accrual";
 
 describe("monthly accrual minutes", () => {
@@ -88,5 +90,25 @@ describe("accrual job no-op until the period is open", () => {
   it("uses the 1st of the month in the org timezone", () => {
     expect(monthStartInZone("2027-01-15T23:00:00.000Z", "UTC")).toBe("2027-01-01");
     expect(monthStartInZone("2026-12-31T22:00:00.000Z", "Pacific/Auckland")).toBe("2027-01-01");
+  });
+
+  it("runMonthlyAccrual posts 0 when the period is future", async () => {
+    const source: AccrualJobSource = {
+      listOrgs: async () => [{ id: "org", timezone: "UTC", accrualJobEnabled: true }],
+      periodStatus: async () => "future",
+      listTargets: async () => {
+        throw new Error("must not load targets when period is not open");
+      },
+      liveAccrualExists: async () => false,
+      grantedCredits: async () => 0,
+      adminId: async () => "admin",
+      post: async () => {
+        throw new Error("must not post");
+      },
+    };
+    const result = await runMonthlyAccrual("2027-01-15", source);
+    expect(result.posted).toBe(0);
+    expect(result.skippedNotOpen).toBe(1);
+    expect(result.considered).toBe(0);
   });
 });

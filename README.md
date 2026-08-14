@@ -68,4 +68,6 @@ Do not commit `.env`.
 
 Close the year from `/admin/year-end` **before the first January working day**. Close is an admin action (not an implicit 1 January cron). It freezes new usage dated in year Y, writes **carryover only** (capped by `carryover_max_minutes`; forfeit stays off unless the policy flag is on), grants the Sick 3-day allotment when Y+1 opens, and does **not** write a 17-day Vacation/Unpaid lump.
 
+Seed opens the current year and inserts Y+1 as `future` (so December can request January). After assigning policies, run **first-year open on the same year** to grant Sick. First-year open refuses if another year is already `open`.
+
 Monthly accrual (`bun run job:accrual` / `bun src/jobs/accrual.ts`) is a no-op until that period is `open`. Reopen reverses close-created carryover and sick grants (`reversed_at`); it does not delete rows.

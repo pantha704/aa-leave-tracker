@@ -4,7 +4,7 @@ import {
   requireAdminApi,
   type AdminGateDeps,
 } from "@/server/admin-api";
-import { reopenYear, type YearEndResult } from "@/server/year-end";
+import { parseCalendarYear, reopenYear, type YearEndResult } from "@/server/year-end";
 
 export type ReopenYearDeps = AdminGateDeps & {
   reopen: (
@@ -20,9 +20,7 @@ const defaultDeps: ReopenYearDeps = {
 };
 
 function parseYearParam(year: string): number | null {
-  const value = Number(year);
-  if (!Number.isInteger(value)) return null;
-  return value;
+  return parseCalendarYear(year);
 }
 
 export async function postAdminYearReopen(

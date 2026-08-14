@@ -195,19 +195,97 @@ async function liveAccrualExists(
   return Boolean(row);
 }
 
+export type AccrualAssignmentTarget = {
+  employeeId: string;
+  leaveTypeId: string;
+  periodicMinutes: number | null;
+  grantMinutes: number | null;
+  accrualStopMinutes: number | null;
+  startDate: string;
+  endDate: string | null;
+  validFrom: string;
+  validTo: string | null;
+};
+
+export type AccrualJobSource = {
+  listOrgs: () => Promise<Array<{ id: string; timezone: string; accrualJobEnabled: boolean }>>;
+  periodStatus: (orgId: string, year: number) => Promise<string | null>;
+  listTargets: (orgId: string) => Promise<AccrualAssignmentTarget[]>;
+  liveAccrualExists: (
+    employeeId: string,
+    leaveTypeId: string,
+    periodYear: number,
+    effectiveOn: string,
+  ) => Promise<boolean>;
+  grantedCredits: (employeeId: string, leaveTypeId: string, periodYear: number) => Promise<number>;
+  adminId: (orgId: string) => Promise<string | undefined>;
+  post: (input: PostLedgerInput) => Promise<void>;
+};
+
+export function pgAccrualSource(db: LedgerSession, createdByOverride?: string): AccrualJobSource {
+  return {
+    async listOrgs() {
+      return db
+        .select({
+          id: organizations.id,
+          timezone: organizations.timezone,
+          accrualJobEnabled: orgSettings.accrualJobEnabled,
+        })
+        .from(organizations)
+        .innerJoin(orgSettings, eq(orgSettings.orgId, organizations.id));
+    },
+    periodStatus: (orgId, year) => loadPeriodStatus(db, orgId, year),
+    async listTargets(orgId) {
+      return db
+        .select({
+          employeeId: employees.id,
+          leaveTypeId: leaveTypes.id,
+          periodicMinutes: policies.periodicMinutes,
+          grantMinutes: policies.grantMinutes,
+          accrualStopMinutes: policies.accrualStopMinutes,
+          startDate: employees.startDate,
+          endDate: employees.endDate,
+          validFrom: policyAssignments.validFrom,
+          validTo: policyAssignments.validTo,
+        })
+        .from(policyAssignments)
+        .innerJoin(employees, eq(employees.id, policyAssignments.employeeId))
+        .innerJoin(policies, eq(policies.id, policyAssignments.policyId))
+        .innerJoin(leaveTypes, eq(leaveTypes.id, policyAssignments.leaveTypeId))
+        .where(
+          and(
+            eq(employees.orgId, orgId),
+            eq(employees.active, true),
+            eq(leaveTypes.code, DEMO_VACATION_TYPE_CODE),
+            eq(policies.grantMode, "periodic"),
+            eq(policies.periodicCadence, "monthly"),
+          ),
+        );
+    },
+    liveAccrualExists: (employeeId, leaveTypeId, periodYear, effectiveOn) =>
+      liveAccrualExists(db, employeeId, leaveTypeId, periodYear, effectiveOn),
+    grantedCredits: (employeeId, leaveTypeId, periodYear) =>
+      grantedCreditsInPeriod(db, employeeId, leaveTypeId, periodYear),
+    async adminId(orgId) {
+      if (createdByOverride) return createdByOverride;
+      const [row] = await db
+        .select({ id: employees.id })
+        .from(employees)
+        .where(and(eq(employees.orgId, orgId), eq(employees.role, "admin")))
+        .limit(1);
+      return row?.id;
+    },
+    async post(input) {
+      await postLedgerEntry(db, input);
+    },
+  };
+}
+
 export async function runMonthlyAccrual(
   asOf: Date | string = new Date(),
-  db: LedgerSession = getDb(),
-  createdByOverride?: string,
+  source: AccrualJobSource = pgAccrualSource(getDb()),
 ): Promise<AccrualJobResult> {
-  const orgs = await db
-    .select({
-      id: organizations.id,
-      timezone: organizations.timezone,
-      accrualJobEnabled: orgSettings.accrualJobEnabled,
-    })
-    .from(organizations)
-    .innerJoin(orgSettings, eq(orgSettings.orgId, organizations.id));
+  const orgs = await source.listOrgs();
 
   let considered = 0;
   let posted = 0;
@@ -219,55 +297,22 @@ export async function runMonthlyAccrual(
     const monthStart = monthStartInZone(asOf, org.timezone);
     asOfLabel = monthStart;
     const year = periodYearOfMonthStart(monthStart);
-    const periodStatus = await loadPeriodStatus(db, org.id, year);
+    const periodStatus = await source.periodStatus(org.id, year);
     if (!isPeriodOpen(periodStatus)) {
       skippedNotOpen += 1;
       continue;
     }
 
-    const targets = await db
-      .select({
-        employeeId: employees.id,
-        leaveTypeId: leaveTypes.id,
-        periodicMinutes: policies.periodicMinutes,
-        grantMinutes: policies.grantMinutes,
-        accrualStopMinutes: policies.accrualStopMinutes,
-        startDate: employees.startDate,
-        endDate: employees.endDate,
-        validFrom: policyAssignments.validFrom,
-        validTo: policyAssignments.validTo,
-      })
-      .from(policyAssignments)
-      .innerJoin(employees, eq(employees.id, policyAssignments.employeeId))
-      .innerJoin(policies, eq(policies.id, policyAssignments.policyId))
-      .innerJoin(leaveTypes, eq(leaveTypes.id, policyAssignments.leaveTypeId))
-      .where(
-        and(
-          eq(employees.orgId, org.id),
-          eq(employees.active, true),
-          eq(leaveTypes.code, DEMO_VACATION_TYPE_CODE),
-          eq(policies.grantMode, "periodic"),
-          eq(policies.periodicCadence, "monthly"),
-        ),
-      );
-
-    const actorId =
-      createdByOverride ??
-      (
-        await db
-          .select({ id: employees.id })
-          .from(employees)
-          .where(and(eq(employees.orgId, org.id), eq(employees.role, "admin")))
-          .limit(1)
-      )[0]?.id;
+    const targets = await source.listTargets(org.id);
+    const actorId = await source.adminId(org.id);
     if (!actorId) continue;
 
     for (const target of targets) {
       if (target.periodicMinutes == null) continue;
       if (!assignmentCovers(target, monthStart)) continue;
       considered += 1;
-      const exists = await liveAccrualExists(db, target.employeeId, target.leaveTypeId, year, monthStart);
-      const credits = await grantedCreditsInPeriod(db, target.employeeId, target.leaveTypeId, year);
+      const exists = await source.liveAccrualExists(target.employeeId, target.leaveTypeId, year, monthStart);
+      const credits = await source.grantedCredits(target.employeeId, target.leaveTypeId, year);
       const planned = planMonthlyAccrual({
         periodStatus,
         monthStart,
@@ -296,7 +341,7 @@ export async function runMonthlyAccrual(
         createdBy: actorId,
       };
       try {
-        await postLedgerEntry(db, input);
+        await source.post(input);
         posted += 1;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

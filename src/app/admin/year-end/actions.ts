@@ -5,6 +5,7 @@ import { requireAdmin } from "@/server/auth";
 import {
   closeYear,
   openFirstYear,
+  parseCalendarYear,
   previewCloseYear,
   reopenYear,
   type ClosePreviewRow,
@@ -19,9 +20,7 @@ export type YearEndFormState =
   | undefined;
 
 function parseYear(formData: FormData): number | null {
-  const raw = Number(String(formData.get("year") ?? ""));
-  if (!Number.isInteger(raw) || raw < 2000 || raw > 2100) return null;
-  return raw;
+  return parseCalendarYear(String(formData.get("year") ?? ""));
 }
 
 function refresh() {

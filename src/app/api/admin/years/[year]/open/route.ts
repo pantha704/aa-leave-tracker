@@ -4,7 +4,7 @@ import {
   requireAdminApi,
   type AdminGateDeps,
 } from "@/server/admin-api";
-import { openFirstYear, type YearEndResult } from "@/server/year-end";
+import { openFirstYear, parseCalendarYear, type YearEndResult } from "@/server/year-end";
 
 export type OpenYearDeps = AdminGateDeps & {
   open: (orgId: string, year: number, actorId: string) => Promise<YearEndResult & { posts?: number }>;
@@ -16,9 +16,7 @@ const defaultDeps: OpenYearDeps = {
 };
 
 function parseYearParam(year: string): number | null {
-  const value = Number(year);
-  if (!Number.isInteger(value)) return null;
-  return value;
+  return parseCalendarYear(year);
 }
 
 export async function postAdminYearOpen(

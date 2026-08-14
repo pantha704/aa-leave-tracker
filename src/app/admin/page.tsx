@@ -8,10 +8,13 @@ export default async function AdminPage() {
       <header>
         <h1 className="text-3xl font-semibold tracking-tight">Admin</h1>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          Holidays and leave types for this organization.
+          Roster, holidays, and leave types for this organization.
         </p>
       </header>
       <nav className="flex flex-col gap-2 text-sm">
+        <a className="underline" href="/admin/employees">
+          Employees
+        </a>
         <a className="underline" href="/admin/holidays">
           Holidays
         </a>

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
-import { hashPassword } from "better-auth/crypto";
+import { hashPassword as hashCredentialPassword } from "better-auth/crypto";
 import { account, employees, invites, user } from "@/db/schema";
 import { tryWriteAudit, writeAuditEvent, type AuditWriter } from "./audit";
 import type { EmployeeRole } from "./auth-gate";
@@ -60,19 +60,28 @@ export type InviteRecord = {
 };
 
 export type InviteStore = {
-  insertEmployee(row: {
-    orgId: string;
-    email: string;
-    name: string;
-    role: EmployeeRole;
-    startDate: string;
-    mustChangePassword: boolean;
-  }): Promise<EmployeeRecord>;
-  insertInvite(row: {
+  insertEmployeeWithInvite(input: {
+    employee: {
+      orgId: string;
+      email: string;
+      name: string;
+      role: EmployeeRole;
+      startDate: string;
+      mustChangePassword: boolean;
+    };
+    invite: {
+      tokenHash: string;
+      expiresAt: Date;
+      createdBy: string;
+    };
+  }): Promise<{ employee: EmployeeRecord; invite: InviteRecord }>;
+  findEmployeeById(id: string): Promise<EmployeeRecord | null>;
+  replaceOpenInvite(input: {
     employeeId: string;
     tokenHash: string;
     expiresAt: Date;
     createdBy: string;
+    invalidateAt: Date;
   }): Promise<InviteRecord>;
   findOpenInviteByTokenHash(tokenHash: string): Promise<{
     invite: InviteRecord;
@@ -83,7 +92,7 @@ export type InviteStore = {
     employeeId: string;
     email: string;
     name: string;
-    password: string;
+    passwordHash: string;
     acceptedAt: Date;
   }): Promise<{ authUserId: string } | null>;
 };
@@ -92,6 +101,7 @@ export type InviteDeps = {
   now?: () => Date;
   randomToken?: () => string;
   writeAudit?: AuditWriter;
+  hashPassword?: (password: string) => Promise<string>;
   store: InviteStore;
 };
 
@@ -103,9 +113,21 @@ export type CreateEmployeeInput = {
   role?: string;
 };
 
+export type IssuedInvite = {
+  ok: true;
+  employeeId: string;
+  inviteId: string;
+  rawToken: string;
+  invitePath: string;
+};
+
 export type CreateEmployeeResult =
-  | { ok: true; employeeId: string; inviteId: string; rawToken: string; invitePath: string }
+  | IssuedInvite
   | { ok: false; status: 400 | 401 | 403; error: string };
+
+export type IssueInviteResult =
+  | IssuedInvite
+  | { ok: false; status: 400 | 401 | 403 | 404; error: string };
 
 export type AcceptInviteResult =
   | { ok: true; employeeId: string; email: string }
@@ -134,20 +156,31 @@ function parseCreateFields(input: CreateEmployeeInput) {
 
 export function pgInviteStore(db: ReturnType<typeof getDb> = getDb()): InviteStore {
   return {
-    async insertEmployee(row) {
+    async insertEmployeeWithInvite(input) {
       try {
-        const [created] = await db
-          .insert(employees)
-          .values({
-            orgId: row.orgId,
-            email: row.email,
-            name: row.name,
-            role: row.role,
-            startDate: row.startDate,
-            mustChangePassword: row.mustChangePassword,
-          })
-          .returning();
-        return created;
+        return await db.transaction(async (tx) => {
+          const [employee] = await tx
+            .insert(employees)
+            .values({
+              orgId: input.employee.orgId,
+              email: input.employee.email,
+              name: input.employee.name,
+              role: input.employee.role,
+              startDate: input.employee.startDate,
+              mustChangePassword: input.employee.mustChangePassword,
+            })
+            .returning();
+          const [invite] = await tx
+            .insert(invites)
+            .values({
+              employeeId: employee.id,
+              tokenHash: input.invite.tokenHash,
+              expiresAt: input.invite.expiresAt,
+              createdBy: input.invite.createdBy,
+            })
+            .returning();
+          return { employee, invite };
+        });
       } catch (err) {
         if (isUniqueViolation(err)) {
           throw new DuplicateEmailError();
@@ -155,17 +188,27 @@ export function pgInviteStore(db: ReturnType<typeof getDb> = getDb()): InviteSto
         throw err;
       }
     },
-    async insertInvite(row) {
-      const [created] = await db
-        .insert(invites)
-        .values({
-          employeeId: row.employeeId,
-          tokenHash: row.tokenHash,
-          expiresAt: row.expiresAt,
-          createdBy: row.createdBy,
-        })
-        .returning();
-      return created;
+    async findEmployeeById(id) {
+      const [row] = await db.select().from(employees).where(eq(employees.id, id)).limit(1);
+      return row ?? null;
+    },
+    async replaceOpenInvite(input) {
+      return db.transaction(async (tx) => {
+        await tx
+          .update(invites)
+          .set({ expiresAt: input.invalidateAt })
+          .where(and(eq(invites.employeeId, input.employeeId), isNull(invites.acceptedAt)));
+        const [created] = await tx
+          .insert(invites)
+          .values({
+            employeeId: input.employeeId,
+            tokenHash: input.tokenHash,
+            expiresAt: input.expiresAt,
+            createdBy: input.createdBy,
+          })
+          .returning();
+        return created;
+      });
     },
     async findOpenInviteByTokenHash(tokenHash) {
       const [row] = await db
@@ -190,7 +233,6 @@ export function pgInviteStore(db: ReturnType<typeof getDb> = getDb()): InviteSto
         if (updated.length === 0) return null;
 
         const authUserId = crypto.randomUUID();
-        const passwordHash = await hashPassword(input.password);
         await tx.insert(user).values({
           id: authUserId,
           name: input.name,
@@ -204,7 +246,7 @@ export function pgInviteStore(db: ReturnType<typeof getDb> = getDb()): InviteSto
           accountId: authUserId,
           providerId: "credential",
           userId: authUserId,
-          password: passwordHash,
+          password: input.passwordHash,
           createdAt: input.acceptedAt,
           updatedAt: input.acceptedAt,
         });
@@ -232,17 +274,15 @@ function resolveDeps(deps: InviteDeps) {
     now: deps.now ?? (() => new Date()),
     randomToken: deps.randomToken ?? generateInviteToken,
     writeAudit: deps.writeAudit ?? writeAuditEvent,
+    hashPassword: deps.hashPassword ?? hashCredentialPassword,
     store: deps.store,
   };
 }
 
-export async function createEmployeeWithInvite(
-  input: CreateEmployeeInput,
-  deps: InviteDeps,
-): Promise<CreateEmployeeResult> {
-  const { now, randomToken, writeAudit, store } = resolveDeps(deps);
-  const { actor } = input;
-
+async function denyUnlessAdmin(
+  actor: RosterActor | null,
+  writeAudit: AuditWriter,
+): Promise<{ ok: true; actor: RosterActor } | { ok: false; status: 401 | 403; error: string }> {
   if (!actor) {
     return { ok: false, status: 401, error: "unauthenticated" };
   }
@@ -255,21 +295,49 @@ export async function createEmployeeWithInvite(
     });
     return { ok: false, status: 403, error: "forbidden" };
   }
+  return { ok: true, actor };
+}
+
+function issued(employeeId: string, inviteId: string, rawToken: string): IssuedInvite {
+  return {
+    ok: true,
+    employeeId,
+    inviteId,
+    rawToken,
+    invitePath: `/invite/${rawToken}`,
+  };
+}
+
+export async function createEmployeeWithInvite(
+  input: CreateEmployeeInput,
+  deps: InviteDeps,
+): Promise<CreateEmployeeResult> {
+  const { now, randomToken, writeAudit, store } = resolveDeps(deps);
+  const allowed = await denyUnlessAdmin(input.actor, writeAudit);
+  if (!allowed.ok) return allowed;
 
   const parsed = parseCreateFields(input);
   if (!parsed.ok) {
     return { ok: false, status: 400, error: parsed.error };
   }
 
-  let employee: EmployeeRecord;
+  const rawToken = randomToken();
+  let created: { employee: EmployeeRecord; invite: InviteRecord };
   try {
-    employee = await store.insertEmployee({
-      orgId: actor.orgId,
-      email: parsed.email,
-      name: parsed.name,
-      role: parsed.role,
-      startDate: parsed.startDate,
-      mustChangePassword: false,
+    created = await store.insertEmployeeWithInvite({
+      employee: {
+        orgId: allowed.actor.orgId,
+        email: parsed.email,
+        name: parsed.name,
+        role: parsed.role,
+        startDate: parsed.startDate,
+        mustChangePassword: false,
+      },
+      invite: {
+        tokenHash: hashInviteToken(rawToken),
+        expiresAt: inviteExpiresAt(now()),
+        createdBy: allowed.actor.id,
+      },
     });
   } catch (err) {
     if (err instanceof DuplicateEmailError) {
@@ -278,29 +346,52 @@ export async function createEmployeeWithInvite(
     throw err;
   }
 
+  await tryWriteAudit(writeAudit, {
+    actorId: allowed.actor.id,
+    action: "employee.created",
+    entityType: "employee",
+    entityId: created.employee.id,
+    after: { email: created.employee.email, role: created.employee.role, inviteId: created.invite.id },
+  });
+
+  return issued(created.employee.id, created.invite.id, rawToken);
+}
+
+export async function issueInvite(
+  input: { actor: RosterActor | null; employeeId: string },
+  deps: InviteDeps,
+): Promise<IssueInviteResult> {
+  const { now, randomToken, writeAudit, store } = resolveDeps(deps);
+  const allowed = await denyUnlessAdmin(input.actor, writeAudit);
+  if (!allowed.ok) return allowed;
+
+  const employee = await store.findEmployeeById(input.employeeId);
+  if (!employee || employee.orgId !== allowed.actor.orgId) {
+    return { ok: false, status: 404, error: "Employee not found" };
+  }
+  if (employee.authUserId) {
+    return { ok: false, status: 400, error: "Invite already accepted" };
+  }
+
+  const issuedAt = now();
   const rawToken = randomToken();
-  const invite = await store.insertInvite({
+  const invite = await store.replaceOpenInvite({
     employeeId: employee.id,
     tokenHash: hashInviteToken(rawToken),
-    expiresAt: inviteExpiresAt(now()),
-    createdBy: actor.id,
+    expiresAt: inviteExpiresAt(issuedAt),
+    createdBy: allowed.actor.id,
+    invalidateAt: issuedAt,
   });
 
   await tryWriteAudit(writeAudit, {
-    actorId: actor.id,
-    action: "employee.created",
-    entityType: "employee",
-    entityId: employee.id,
-    after: { email: employee.email, role: employee.role, inviteId: invite.id },
+    actorId: allowed.actor.id,
+    action: "invite.reissued",
+    entityType: "invite",
+    entityId: invite.id,
+    after: { employeeId: employee.id },
   });
 
-  return {
-    ok: true,
-    employeeId: employee.id,
-    inviteId: invite.id,
-    rawToken,
-    invitePath: `/invite/${rawToken}`,
-  };
+  return issued(employee.id, invite.id, rawToken);
 }
 
 async function loadUsableInvite(
@@ -336,7 +427,7 @@ export async function acceptInvite(
   input: { rawToken: string; password: string },
   deps: InviteDeps,
 ): Promise<AcceptInviteResult> {
-  const { now, writeAudit, store } = resolveDeps(deps);
+  const { now, writeAudit, hashPassword, store } = resolveDeps(deps);
   const password = input.password;
   if (password.length < 8) {
     return { ok: false, status: 400, error: "Password must be at least 8 characters" };
@@ -345,12 +436,13 @@ export async function acceptInvite(
   const loaded = await loadUsableInvite(input.rawToken, deps);
   if (!loaded.ok) return loaded;
 
+  const passwordHash = await hashPassword(password);
   const accepted = await store.acceptInvite({
     inviteId: loaded.invite.id,
     employeeId: loaded.employee.id,
     email: loaded.employee.email,
     name: loaded.employee.name,
-    password,
+    passwordHash,
     acceptedAt: now(),
   });
   if (!accepted) {

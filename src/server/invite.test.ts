@@ -9,6 +9,7 @@ import {
   hashInviteToken,
   inviteExpiresAt,
   INVITE_TTL_MS,
+  issueInvite,
   previewInvite,
   type EmployeeRecord,
   type InviteDeps,
@@ -16,6 +17,7 @@ import {
   type InviteStore,
   type RosterActor,
 } from "./invite";
+import { gateInvitePath, inviteTokenFromPath } from "./invite-http";
 
 const admin: RosterActor = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -31,40 +33,62 @@ const employee: RosterActor = {
 function memoryInvite(now = new Date("2026-03-15T12:00:00.000Z"), rawToken = "raw-invite-token") {
   const employees = new Map<string, EmployeeRecord>();
   const invites = new Map<string, InviteRecord>();
-  const credentials: { authUserId: string; email: string; password: string }[] = [];
+  const credentials: { authUserId: string; email: string; passwordHash: string }[] = [];
   const events: AuditEventInput[] = [];
+  const hooks = { failInvite: false };
 
   const store: InviteStore = {
-    async insertEmployee(row) {
+    async insertEmployeeWithInvite(input) {
       for (const existing of employees.values()) {
-        if (existing.orgId === row.orgId && existing.email === row.email) {
+        if (existing.orgId === input.employee.orgId && existing.email === input.employee.email) {
           throw new DuplicateEmailError();
         }
       }
       const rec: EmployeeRecord = {
         id: crypto.randomUUID(),
-        orgId: row.orgId,
-        email: row.email,
-        name: row.name,
-        role: row.role,
-        startDate: row.startDate,
-        mustChangePassword: row.mustChangePassword,
+        orgId: input.employee.orgId,
+        email: input.employee.email,
+        name: input.employee.name,
+        role: input.employee.role,
+        startDate: input.employee.startDate,
+        mustChangePassword: input.employee.mustChangePassword,
         authUserId: null,
       };
       employees.set(rec.id, rec);
-      return rec;
-    },
-    async insertInvite(row) {
-      const rec: InviteRecord = {
+      if (hooks.failInvite) {
+        employees.delete(rec.id);
+        throw new Error("invite write failed");
+      }
+      const invite: InviteRecord = {
         id: crypto.randomUUID(),
-        employeeId: row.employeeId,
-        tokenHash: row.tokenHash,
-        expiresAt: row.expiresAt,
+        employeeId: rec.id,
+        tokenHash: input.invite.tokenHash,
+        expiresAt: input.invite.expiresAt,
         acceptedAt: null,
-        createdBy: row.createdBy,
+        createdBy: input.invite.createdBy,
       };
-      invites.set(rec.id, rec);
-      return rec;
+      invites.set(invite.id, invite);
+      return { employee: rec, invite };
+    },
+    async findEmployeeById(id) {
+      return employees.get(id) ?? null;
+    },
+    async replaceOpenInvite(input) {
+      for (const row of invites.values()) {
+        if (row.employeeId === input.employeeId && row.acceptedAt == null) {
+          row.expiresAt = input.invalidateAt;
+        }
+      }
+      const invite: InviteRecord = {
+        id: crypto.randomUUID(),
+        employeeId: input.employeeId,
+        tokenHash: input.tokenHash,
+        expiresAt: input.expiresAt,
+        acceptedAt: null,
+        createdBy: input.createdBy,
+      };
+      invites.set(invite.id, invite);
+      return invite;
     },
     async findOpenInviteByTokenHash(tokenHash) {
       const invite = [...invites.values()].find((row) => row.tokenHash === tokenHash && row.acceptedAt == null);
@@ -82,22 +106,24 @@ function memoryInvite(now = new Date("2026-03-15T12:00:00.000Z"), rawToken = "ra
       invite.acceptedAt = input.acceptedAt;
       emp.authUserId = authUserId;
       emp.mustChangePassword = false;
-      credentials.push({ authUserId, email: input.email, password: input.password });
+      credentials.push({ authUserId, email: input.email, passwordHash: input.passwordHash });
       return { authUserId };
     },
   };
 
   const clock = { current: now };
+  const tokens = [rawToken];
   const deps: InviteDeps = {
     now: () => clock.current,
-    randomToken: () => rawToken,
+    randomToken: () => tokens.shift() ?? rawToken,
     writeAudit: async (event) => {
       events.push(event);
     },
+    hashPassword: async (password) => password,
     store,
   };
 
-  return { employees, invites, credentials, events, deps, clock };
+  return { employees, invites, credentials, events, deps, clock, hooks, tokens };
 }
 
 describe("hashInviteToken", () => {
@@ -170,6 +196,89 @@ describe("createEmployeeWithInvite", () => {
     expect(invite.expiresAt.toISOString()).toBe("2026-03-22T12:00:00.000Z");
     expect(JSON.stringify(mem.events)).not.toContain(rawToken);
   });
+
+  it("rolls back the employee when invite insert fails", async () => {
+    const mem = memoryInvite();
+    mem.hooks.failInvite = true;
+    await expect(
+      createEmployeeWithInvite(
+        {
+          actor: admin,
+          name: "Sam Hire",
+          email: "sam@example.com",
+          startDate: "2026-04-01",
+        },
+        mem.deps,
+      ),
+    ).rejects.toThrow(/invite write failed/);
+    expect(mem.employees.size).toBe(0);
+    expect(mem.invites.size).toBe(0);
+  });
+});
+
+describe("issueInvite", () => {
+  it("mints a new hashed token and expires the previous open invite", async () => {
+    const mem = memoryInvite(new Date("2026-03-15T12:00:00.000Z"), "first-token");
+    mem.tokens.push("second-token");
+    const created = await createEmployeeWithInvite(
+      {
+        actor: admin,
+        name: "Sam Hire",
+        email: "sam@example.com",
+        startDate: "2026-04-01",
+      },
+      mem.deps,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const reissued = await issueInvite({ actor: admin, employeeId: created.employeeId }, mem.deps);
+    expect(reissued.ok).toBe(true);
+    if (!reissued.ok) return;
+    expect(reissued.rawToken).toBe("second-token");
+    expect(reissued.invitePath).toBe("/invite/second-token");
+
+    expect(await previewInvite("first-token", mem.deps)).toMatchObject({ ok: false, status: 410 });
+    expect(await previewInvite("second-token", mem.deps)).toEqual({ ok: true, name: "Sam Hire" });
+    expect(JSON.stringify(mem.events)).not.toContain("second-token");
+  });
+
+  it("blocks re-issue after the employee already has a login", async () => {
+    const mem = memoryInvite();
+    const created = await createEmployeeWithInvite(
+      {
+        actor: admin,
+        name: "Sam Hire",
+        email: "sam@example.com",
+        startDate: "2026-04-01",
+      },
+      mem.deps,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    await acceptInvite({ rawToken: "raw-invite-token", password: "correct-horse" }, mem.deps);
+
+    const reissued = await issueInvite({ actor: admin, employeeId: created.employeeId }, mem.deps);
+    expect(reissued).toEqual({ ok: false, status: 400, error: "Invite already accepted" });
+  });
+
+  it("employee cannot re-issue invites", async () => {
+    const mem = memoryInvite();
+    const created = await createEmployeeWithInvite(
+      {
+        actor: admin,
+        name: "Sam Hire",
+        email: "sam@example.com",
+        startDate: "2026-04-01",
+      },
+      mem.deps,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const result = await issueInvite({ actor: employee, employeeId: created.employeeId }, mem.deps);
+    expect(result).toEqual({ ok: false, status: 403, error: "forbidden" });
+  });
 });
 
 describe("acceptInvite", () => {
@@ -196,9 +305,37 @@ describe("acceptInvite", () => {
     expect(emp.mustChangePassword).toBe(false);
     expect(invite.acceptedAt?.toISOString()).toBe("2026-03-15T12:00:00.000Z");
     expect(mem.credentials).toEqual([
-      { authUserId: emp.authUserId, email: "sam@example.com", password: "correct-horse" },
+      { authUserId: emp.authUserId, email: "sam@example.com", passwordHash: "correct-horse" },
     ]);
     expect(mem.events.some((e) => e.action === "invite.accepted")).toBe(true);
+  });
+
+  it("hashes the password before the accept write", async () => {
+    const order: string[] = [];
+    const mem = memoryInvite(new Date("2026-03-15T12:00:00.000Z"), "accept-me");
+    await createEmployeeWithInvite(
+      {
+        actor: admin,
+        name: "Sam Hire",
+        email: "sam@example.com",
+        startDate: "2026-04-01",
+      },
+      mem.deps,
+    );
+    const origAccept = mem.deps.store.acceptInvite.bind(mem.deps.store);
+    mem.deps.hashPassword = async (password) => {
+      order.push("hash");
+      return `prehashed:${password}`;
+    };
+    mem.deps.store.acceptInvite = async (input) => {
+      order.push("store");
+      expect(input.passwordHash).toBe("prehashed:correct-horse");
+      return origAccept(input);
+    };
+
+    const result = await acceptInvite({ rawToken: "accept-me", password: "correct-horse" }, mem.deps);
+    expect(result.ok).toBe(true);
+    expect(order).toEqual(["hash", "store"]);
   });
 
   it("rejects an expired token", async () => {
@@ -244,5 +381,36 @@ describe("acceptInvite", () => {
     if (result.ok) return;
     expect(result.status).toBe(404);
     expect(mem.credentials).toEqual([]);
+  });
+});
+
+describe("gateInvitePath", () => {
+  it("extracts the raw token from /invite/[token]", () => {
+    expect(inviteTokenFromPath("/invite/abc")).toBe("abc");
+    expect(inviteTokenFromPath("/invite/a/b")).toBeNull();
+    expect(inviteTokenFromPath("/admin")).toBeNull();
+  });
+
+  it("returns HTTP 410 for an expired token", async () => {
+    const mem = memoryInvite(new Date("2026-01-01T00:00:00.000Z"), "stale-token");
+    await createEmployeeWithInvite(
+      {
+        actor: admin,
+        name: "Sam Hire",
+        email: "sam@example.com",
+        startDate: "2026-04-01",
+      },
+      mem.deps,
+    );
+    mem.clock.current = new Date("2026-01-08T00:00:00.000Z");
+    const res = await gateInvitePath("/invite/stale-token", mem.deps);
+    expect(res?.status).toBe(410);
+    await expect(res?.text()).resolves.toContain("This invite is invalid or has expired.");
+  });
+
+  it("returns HTTP 404 for an unknown token", async () => {
+    const mem = memoryInvite();
+    const res = await gateInvitePath("/invite/missing", mem.deps);
+    expect(res?.status).toBe(404);
   });
 });

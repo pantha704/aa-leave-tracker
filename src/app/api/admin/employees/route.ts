@@ -55,6 +55,7 @@ export async function postAdminEmployees(
     {
       employeeId: result.employeeId,
       invitePath: result.invitePath,
+      inviteUrl: new URL(result.invitePath, request.nextUrl.origin).href,
     },
     { status: 201 },
   );

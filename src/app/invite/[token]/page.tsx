@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { defaultInviteDeps, previewInvite } from "@/server/invite";
 import { InviteForm } from "./invite-form";
 
@@ -8,6 +9,9 @@ export default async function InvitePage({
 }) {
   const { token } = await params;
   const preview = await previewInvite(token, defaultInviteDeps());
+  if (!preview.ok && preview.status === 404) {
+    notFound();
+  }
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6">

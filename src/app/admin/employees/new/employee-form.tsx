@@ -1,18 +1,36 @@
 "use client";
 
 import { useActionState } from "react";
-import { createEmployeeAction } from "./actions";
+import { createEmployeeAction, reissueInviteAction } from "./actions";
 
 export function EmployeeForm() {
   const [state, action, pending] = useActionState(createEmployeeAction, undefined);
+  const [reissueState, reissue, reissuing] = useActionState(reissueInviteAction, undefined);
+  const issued = reissueState && "invitePath" in reissueState ? reissueState : state;
 
-  if (state && "invitePath" in state) {
+  if (issued && "invitePath" in issued) {
+    const inviteUrl = new URL(issued.invitePath, window.location.origin).href;
     return (
       <div className="mt-8 flex w-full max-w-sm flex-col gap-3 text-sm">
         <p>Employee created. Copy this invite link now — it is shown once.</p>
         <p className="break-all rounded border border-zinc-300 px-3 py-2 font-mono text-xs dark:border-zinc-700">
-          {state.invitePath}
+          {inviteUrl}
         </p>
+        <form action={reissue}>
+          <input type="hidden" name="employeeId" value={issued.employeeId} />
+          <button
+            className="underline disabled:opacity-60"
+            type="submit"
+            disabled={reissuing}
+          >
+            Re-issue invite
+          </button>
+        </form>
+        {reissueState && "error" in reissueState ? (
+          <p className="text-sm text-red-600" role="alert">
+            {reissueState.error}
+          </p>
+        ) : null}
         <a className="underline" href="/admin/employees/new">
           Create another
         </a>

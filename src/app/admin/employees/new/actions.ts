@@ -2,11 +2,11 @@
 
 import { requireAdmin } from "@/server/auth";
 import type { EmployeeRole } from "@/server/auth-gate";
-import { createEmployeeWithInvite, defaultInviteDeps } from "@/server/invite";
+import { createEmployeeWithInvite, defaultInviteDeps, issueInvite } from "@/server/invite";
 
 export type CreateEmployeeState =
   | { error: string }
-  | { invitePath: string }
+  | { invitePath: string; employeeId: string }
   | undefined;
 
 export async function createEmployeeAction(
@@ -32,5 +32,27 @@ export async function createEmployeeAction(
   if (!result.ok) {
     return { error: result.error };
   }
-  return { invitePath: result.invitePath };
+  return { invitePath: result.invitePath, employeeId: result.employeeId };
+}
+
+export async function reissueInviteAction(
+  _prev: CreateEmployeeState,
+  formData: FormData,
+): Promise<CreateEmployeeState> {
+  const { employee } = await requireAdmin();
+  const result = await issueInvite(
+    {
+      actor: {
+        id: employee.id,
+        role: employee.role as EmployeeRole,
+        orgId: employee.orgId,
+      },
+      employeeId: String(formData.get("employeeId") ?? ""),
+    },
+    defaultInviteDeps(),
+  );
+  if (!result.ok) {
+    return { error: result.error };
+  }
+  return { invitePath: result.invitePath, employeeId: result.employeeId };
 }

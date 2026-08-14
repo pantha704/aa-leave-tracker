@@ -41,6 +41,23 @@ describe("GET/POST /api/admin/policies", () => {
     expect(postRes.status).toBe(403);
   });
 
+  it("admin posting non-JSON receives 400", async () => {
+    const res = await postAdminPolicy(
+      req("/api/admin/policies", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{",
+      }),
+      {
+        getAuthzActor: async () => ({ id: "admin", role: "admin" }),
+        loadOrgId: async () => "org-1",
+        ...unusedList,
+      },
+    );
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "invalid JSON" });
+  });
+
   it("admin can list", async () => {
     const res = await getAdminPolicies(req("/api/admin/policies"), {
       getAuthzActor: async () => ({ id: "admin", role: "admin" }),

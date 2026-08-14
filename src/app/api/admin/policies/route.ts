@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { defaultAdminGateDeps, requireAdminApi, type AdminGateDeps } from "@/server/admin-api";
+import {
+  defaultAdminGateDeps,
+  readJsonBody,
+  requireAdminApi,
+  type AdminGateDeps,
+} from "@/server/admin-api";
 import {
   createPolicy,
   listPolicies,
@@ -41,7 +46,11 @@ export async function postAdminPolicy(
     return NextResponse.json(gate.body, { status: gate.status });
   }
 
-  const parsed = parsePolicyInput(await request.json());
+  const body = await readJsonBody(request);
+  if (!body.ok) {
+    return NextResponse.json({ error: body.error }, { status: 400 });
+  }
+  const parsed = parsePolicyInput(body.value);
   if (!parsed.ok) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }

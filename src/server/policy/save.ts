@@ -12,11 +12,27 @@ import { getDb } from "@/server/db";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Rejects 2026-02-31 / 2026-13-40 so Postgres date columns never see them. */
+export function parseCalendarDate(value: string): string | null {
+  const match = value.trim().match(ISO_DATE);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  if (utc.getUTCFullYear() !== year || utc.getUTCMonth() !== month - 1 || utc.getUTCDate() !== day) {
+    return null;
+  }
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
 
 const uuid = z.string().regex(UUID_RE, "must be a uuid");
-const isoDate = z.string().regex(ISO_DATE, "must be YYYY-MM-DD");
-const intMinutes = z.number().int("must be an integer number of minutes");
+const isoDate = z.string().refine((value) => parseCalendarDate(value) !== null, {
+  message: "must be a real calendar date (YYYY-MM-DD)",
+});
+const intMinutes = z.number().int("must be an integer number of minutes").nonnegative();
 const nullableMinutes = intMinutes.nullable();
 
 export const GRANT_MODES = ["lump_sum", "periodic", "hourly_worked", "none"] as const;
@@ -362,29 +378,37 @@ export function policyToEditorJson(policy: PolicyRecord): string {
   );
 }
 
-export const NEW_POLICY_JSON = `{
-  "leave_type_id": "",
-  "name": "",
-  "period": "calendar_year",
-  "grant_mode": "periodic",
-  "grant_minutes": null,
-  "periodic_cadence": "monthly",
-  "periodic_minutes": null,
-  "accrual_stop_minutes": null,
-  "take_ceiling_minutes": null,
-  "carryover_max_minutes": null,
-  "allow_forfeit": false,
-  "negative_allowed": false,
-  "negative_floor_minutes": null,
-  "waiting_period_days": 0,
-  "approval_for_request": "admin",
-  "approval_for_log": "none",
-  "notice_days": null,
-  "min_increment_minutes": 60,
-  "effective_from": "2026-01-01",
-  "effective_to": null,
-  "tenure_bands": []
-}`;
+export function newPolicyJson(leaveTypeId = ""): string {
+  return JSON.stringify(
+    {
+      leave_type_id: leaveTypeId,
+      name: "",
+      period: "calendar_year",
+      grant_mode: "periodic",
+      grant_minutes: null,
+      periodic_cadence: "monthly",
+      periodic_minutes: null,
+      accrual_stop_minutes: null,
+      take_ceiling_minutes: null,
+      carryover_max_minutes: null,
+      allow_forfeit: false,
+      negative_allowed: false,
+      negative_floor_minutes: null,
+      waiting_period_days: 0,
+      approval_for_request: "admin",
+      approval_for_log: "none",
+      notice_days: null,
+      min_increment_minutes: 60,
+      effective_from: "2026-01-01",
+      effective_to: null,
+      tenure_bands: [],
+    },
+    null,
+    2,
+  );
+}
+
+export const NEW_POLICY_JSON = newPolicyJson();
 
 export async function listPolicies(orgId: string): Promise<PolicyRecord[]> {
   const db = getDb();
@@ -438,6 +462,18 @@ export async function listOrgEmployees(orgId: string) {
     .orderBy(employees.name);
 }
 
+export async function listOrgLeaveTypes(orgId: string) {
+  return getDb()
+    .select({
+      id: leaveTypes.id,
+      code: leaveTypes.code,
+      name: leaveTypes.name,
+    })
+    .from(leaveTypes)
+    .where(eq(leaveTypes.orgId, orgId))
+    .orderBy(leaveTypes.code);
+}
+
 export type SavePolicyResult =
   | { ok: true; policy: PolicyRecord }
   | { ok: false; error: string; status: 400 | 404 };
@@ -446,48 +482,146 @@ export type AssignPolicyResult =
   | { ok: true; assignment: AssignmentRecord; updatedInPlace: boolean }
   | { ok: false; error: string; status: 400 | 404 };
 
-async function leaveTypeInOrg(
-  db: ReturnType<typeof getDb>,
-  orgId: string,
-  leaveTypeId: string,
-): Promise<boolean> {
-  const [row] = await db
-    .select({ id: leaveTypes.id })
-    .from(leaveTypes)
-    .where(and(eq(leaveTypes.id, leaveTypeId), eq(leaveTypes.orgId, orgId)))
-    .limit(1);
-  return Boolean(row);
+const assignmentReturning = {
+  id: policyAssignments.id,
+  employeeId: policyAssignments.employeeId,
+  policyId: policyAssignments.policyId,
+  leaveTypeId: policyAssignments.leaveTypeId,
+  validFrom: policyAssignments.validFrom,
+  validTo: policyAssignments.validTo,
+};
+
+export type PolicyPersistence = {
+  leaveTypeInOrg: (orgId: string, leaveTypeId: string) => Promise<boolean>;
+  insertPolicy: (orgId: string, input: PolicySaveInput) => Promise<PolicyRecord>;
+  getPolicy: (orgId: string, id: string) => Promise<PolicyRecord | null>;
+  updatePolicyRow: (
+    orgId: string,
+    id: string,
+    input: PolicySaveInput,
+  ) => Promise<PolicyRecord | null>;
+  getPolicyRef: (
+    orgId: string,
+    policyId: string,
+  ) => Promise<{ id: string; leaveTypeId: string } | null>;
+  employeeInOrg: (orgId: string, employeeId: string) => Promise<boolean>;
+  upsertAssignment: (
+    row: Omit<AssignmentRecord, "id">,
+  ) => Promise<{ assignment: AssignmentRecord; updatedInPlace: boolean }>;
+};
+
+function postgresWriteError(err: unknown): string {
+  const code =
+    err && typeof err === "object" && "code" in err ? String((err as { code: unknown }).code) : "";
+  if (code === "23503") return "referenced row not found";
+  if (code === "23505") return "unique constraint violated";
+  if (code === "22007" || code === "22008") return "invalid date";
+  if (err instanceof Error && err.message) return err.message;
+  return "could not save";
 }
+
+export const pgPolicyPersistence: PolicyPersistence = {
+  async leaveTypeInOrg(orgId, leaveTypeId) {
+    const [row] = await getDb()
+      .select({ id: leaveTypes.id })
+      .from(leaveTypes)
+      .where(and(eq(leaveTypes.id, leaveTypeId), eq(leaveTypes.orgId, orgId)))
+      .limit(1);
+    return Boolean(row);
+  },
+  async insertPolicy(orgId, input) {
+    const db = getDb();
+    const bands = bandRows(input);
+    return db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(policies)
+        .values(policyValues(orgId, input))
+        .returning(policyReturning);
+      await replaceTenureBands(tx, row.id, bands);
+      return attachBands(row, bands);
+    });
+  },
+  async getPolicy(orgId, id) {
+    const db = getDb();
+    const [row] = await db
+      .select(policyReturning)
+      .from(policies)
+      .where(and(eq(policies.id, id), eq(policies.orgId, orgId)))
+      .limit(1);
+    if (!row) return null;
+    return attachBands(row, (await loadBands(db, [id])).get(id) ?? []);
+  },
+  async updatePolicyRow(orgId, id, input) {
+    const db = getDb();
+    const bands = bandRows(input);
+    return db.transaction(async (tx) => {
+      const rows = await tx
+        .update(policies)
+        .set(policyValues(orgId, input))
+        .where(and(eq(policies.id, id), eq(policies.orgId, orgId)))
+        .returning(policyReturning);
+      if (rows.length === 0) return null;
+      await replaceTenureBands(tx, id, bands);
+      return attachBands(rows[0], bands);
+    });
+  },
+  async getPolicyRef(orgId, policyId) {
+    const [row] = await getDb()
+      .select({ id: policies.id, leaveTypeId: policies.leaveTypeId })
+      .from(policies)
+      .where(and(eq(policies.id, policyId), eq(policies.orgId, orgId)))
+      .limit(1);
+    return row ?? null;
+  },
+  async employeeInOrg(orgId, employeeId) {
+    const [row] = await getDb()
+      .select({ id: employees.id })
+      .from(employees)
+      .where(and(eq(employees.id, employeeId), eq(employees.orgId, orgId)))
+      .limit(1);
+    return Boolean(row);
+  },
+  async upsertAssignment(row) {
+    const proposedId = crypto.randomUUID();
+    const [saved] = await getDb()
+      .insert(policyAssignments)
+      .values({ id: proposedId, ...row })
+      .onConflictDoUpdate({
+        target: [policyAssignments.employeeId, policyAssignments.leaveTypeId],
+        set: {
+          policyId: row.policyId,
+          validFrom: row.validFrom,
+          validTo: row.validTo,
+        },
+      })
+      .returning(assignmentReturning);
+    return { assignment: saved, updatedInPlace: saved.id !== proposedId };
+  },
+};
 
 export async function createPolicy(
   orgId: string,
   input: PolicySaveInput,
   actorId: string,
   writeAudit: AuditWriter = writeAuditEvent,
+  persist: PolicyPersistence = pgPolicyPersistence,
 ): Promise<SavePolicyResult> {
-  const db = getDb();
-  if (!(await leaveTypeInOrg(db, orgId, input.leave_type_id))) {
-    return { ok: false, status: 400, error: "leave_type_id not found in org" };
+  try {
+    if (!(await persist.leaveTypeInOrg(orgId, input.leave_type_id))) {
+      return { ok: false, status: 400, error: "leave_type_id not found in org" };
+    }
+    const created = await persist.insertPolicy(orgId, input);
+    await tryWriteAudit(writeAudit, {
+      actorId,
+      action: "policy.created",
+      entityType: "policy",
+      entityId: created.id,
+      after: created,
+    });
+    return { ok: true, policy: created };
+  } catch (err) {
+    return { ok: false, status: 400, error: postgresWriteError(err) };
   }
-
-  const bands = bandRows(input);
-  const created = await db.transaction(async (tx) => {
-    const [row] = await tx
-      .insert(policies)
-      .values(policyValues(orgId, input))
-      .returning(policyReturning);
-    await replaceTenureBands(tx, row.id, bands);
-    return attachBands(row, bands);
-  });
-
-  await tryWriteAudit(writeAudit, {
-    actorId,
-    action: "policy.created",
-    entityType: "policy",
-    entityId: created.id,
-    after: created,
-  });
-  return { ok: true, policy: created };
 }
 
 export async function updatePolicy(
@@ -496,45 +630,32 @@ export async function updatePolicy(
   input: PolicySaveInput,
   actorId: string,
   writeAudit: AuditWriter = writeAuditEvent,
+  persist: PolicyPersistence = pgPolicyPersistence,
 ): Promise<SavePolicyResult> {
-  const db = getDb();
-  const [existing] = await db
-    .select(policyReturning)
-    .from(policies)
-    .where(and(eq(policies.id, id), eq(policies.orgId, orgId)))
-    .limit(1);
-  if (!existing) {
-    return { ok: false, status: 404, error: "policy not found" };
+  try {
+    const existing = await persist.getPolicy(orgId, id);
+    if (!existing) {
+      return { ok: false, status: 404, error: "policy not found" };
+    }
+    if (existing.leaveTypeId !== input.leave_type_id) {
+      return { ok: false, status: 400, error: "cannot change leave_type_id (one type per policy)" };
+    }
+    const updated = await persist.updatePolicyRow(orgId, id, input);
+    if (!updated) {
+      return { ok: false, status: 404, error: "policy not found" };
+    }
+    await tryWriteAudit(writeAudit, {
+      actorId,
+      action: "policy.updated",
+      entityType: "policy",
+      entityId: id,
+      before: existing,
+      after: updated,
+    });
+    return { ok: true, policy: updated };
+  } catch (err) {
+    return { ok: false, status: 400, error: postgresWriteError(err) };
   }
-  if (existing.leaveTypeId !== input.leave_type_id) {
-    return { ok: false, status: 400, error: "cannot change leave_type_id (one type per policy)" };
-  }
-
-  const existingBands = (await loadBands(db, [id])).get(id) ?? [];
-  const bands = bandRows(input);
-  const updated = await db.transaction(async (tx) => {
-    const rows = await tx
-      .update(policies)
-      .set(policyValues(orgId, input))
-      .where(and(eq(policies.id, id), eq(policies.orgId, orgId)))
-      .returning(policyReturning);
-    if (rows.length === 0) return null;
-    await replaceTenureBands(tx, id, bands);
-    return attachBands(rows[0], bands);
-  });
-  if (!updated) {
-    return { ok: false, status: 404, error: "policy not found" };
-  }
-
-  await tryWriteAudit(writeAudit, {
-    actorId,
-    action: "policy.updated",
-    entityType: "policy",
-    entityId: id,
-    before: attachBands(existing, existingBands),
-    after: updated,
-  });
-  return { ok: true, policy: updated };
 }
 
 export async function assignPolicy(
@@ -542,93 +663,33 @@ export async function assignPolicy(
   input: AssignmentSaveInput,
   actorId: string,
   writeAudit: AuditWriter = writeAuditEvent,
+  persist: PolicyPersistence = pgPolicyPersistence,
 ): Promise<AssignPolicyResult> {
-  const db = getDb();
-  const [policy] = await db
-    .select({ id: policies.id, leaveTypeId: policies.leaveTypeId })
-    .from(policies)
-    .where(and(eq(policies.id, input.policy_id), eq(policies.orgId, orgId)))
-    .limit(1);
-  if (!policy) {
-    return { ok: false, status: 404, error: "policy not found" };
-  }
+  try {
+    const policy = await persist.getPolicyRef(orgId, input.policy_id);
+    if (!policy) {
+      return { ok: false, status: 404, error: "policy not found" };
+    }
+    if (!(await persist.employeeInOrg(orgId, input.employee_id))) {
+      return { ok: false, status: 400, error: "employee not found in org" };
+    }
 
-  const [employee] = await db
-    .select({ id: employees.id })
-    .from(employees)
-    .where(and(eq(employees.id, input.employee_id), eq(employees.orgId, orgId)))
-    .limit(1);
-  if (!employee) {
-    return { ok: false, status: 400, error: "employee not found in org" };
-  }
-
-  const [existing] = await db
-    .select({
-      id: policyAssignments.id,
-      employeeId: policyAssignments.employeeId,
-      policyId: policyAssignments.policyId,
-      leaveTypeId: policyAssignments.leaveTypeId,
-      validFrom: policyAssignments.validFrom,
-      validTo: policyAssignments.validTo,
-    })
-    .from(policyAssignments)
-    .where(
-      and(
-        eq(policyAssignments.employeeId, input.employee_id),
-        eq(policyAssignments.leaveTypeId, policy.leaveTypeId),
-      ),
-    )
-    .limit(1);
-
-  const next = {
-    employeeId: input.employee_id,
-    policyId: input.policy_id,
-    leaveTypeId: policy.leaveTypeId,
-    validFrom: input.valid_from,
-    validTo: input.valid_to ?? null,
-  };
-
-  if (existing) {
-    const [updated] = await db
-      .update(policyAssignments)
-      .set(next)
-      .where(eq(policyAssignments.id, existing.id))
-      .returning({
-        id: policyAssignments.id,
-        employeeId: policyAssignments.employeeId,
-        policyId: policyAssignments.policyId,
-        leaveTypeId: policyAssignments.leaveTypeId,
-        validFrom: policyAssignments.validFrom,
-        validTo: policyAssignments.validTo,
-      });
+    const result = await persist.upsertAssignment({
+      employeeId: input.employee_id,
+      policyId: input.policy_id,
+      leaveTypeId: policy.leaveTypeId,
+      validFrom: input.valid_from,
+      validTo: input.valid_to ?? null,
+    });
     await tryWriteAudit(writeAudit, {
       actorId,
       action: "policy.assigned",
       entityType: "policy_assignment",
-      entityId: updated.id,
-      before: existing,
-      after: updated,
+      entityId: result.assignment.id,
+      after: result.assignment,
     });
-    return { ok: true, assignment: updated, updatedInPlace: true };
+    return { ok: true, ...result };
+  } catch (err) {
+    return { ok: false, status: 400, error: postgresWriteError(err) };
   }
-
-  const [created] = await db
-    .insert(policyAssignments)
-    .values(next)
-    .returning({
-      id: policyAssignments.id,
-      employeeId: policyAssignments.employeeId,
-      policyId: policyAssignments.policyId,
-      leaveTypeId: policyAssignments.leaveTypeId,
-      validFrom: policyAssignments.validFrom,
-      validTo: policyAssignments.validTo,
-    });
-  await tryWriteAudit(writeAudit, {
-    actorId,
-    action: "policy.assigned",
-    entityType: "policy_assignment",
-    entityId: created.id,
-    after: created,
-  });
-  return { ok: true, assignment: created, updatedInPlace: false };
 }

@@ -2,18 +2,20 @@ import { requireAdmin } from "@/server/auth";
 import {
   listAssignments,
   listOrgEmployees,
+  listOrgLeaveTypes,
   listPolicies,
-  NEW_POLICY_JSON,
+  newPolicyJson,
   policyToEditorJson,
 } from "@/server/policy/save";
 import { AssignPolicyForm, PolicyJsonForm } from "./policy-json-forms";
 
 export default async function AdminPoliciesPage() {
   const { employee } = await requireAdmin();
-  const [policyRows, people, assignments] = await Promise.all([
+  const [policyRows, people, assignments, types] = await Promise.all([
     listPolicies(employee.orgId),
     listOrgEmployees(employee.orgId),
     listAssignments(employee.orgId),
+    listOrgLeaveTypes(employee.orgId),
   ]);
 
   return (
@@ -33,7 +35,24 @@ export default async function AdminPoliciesPage() {
 
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">New policy</h2>
-        <PolicyJsonForm json={NEW_POLICY_JSON} />
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          Set <span className="font-mono">leave_type_id</span> to one of these types (required, one
+          type per policy):
+        </p>
+        {types.length === 0 ? (
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">No leave types in this org yet.</p>
+        ) : (
+          <ul className="font-mono text-xs text-zinc-600 dark:text-zinc-400">
+            {types.map((type) => (
+              <li key={type.id}>
+                {type.id} — {type.code} ({type.name})
+              </li>
+            ))}
+          </ul>
+        )}
+        <PolicyJsonForm
+          json={newPolicyJson(types.length === 1 ? types[0].id : "")}
+        />
       </section>
 
       <section className="flex flex-col gap-6">

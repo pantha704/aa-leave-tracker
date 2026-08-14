@@ -105,19 +105,18 @@ export async function runLockJob(
   source: LockJobSource = pgLockSource(getDb()),
 ): Promise<LockJobResult> {
   const orgs = await source.listOrgs();
-  const instant = typeof now === "string" ? now : now;
+  const at = now instanceof Date ? now : new Date(now);
 
   let considered = 0;
   let locked = 0;
   let skipped = 0;
-  let asOfLabel = typeof now === "string" ? now : now.toISOString();
+  let asOfLabel = now instanceof Date ? now.toISOString() : now;
 
   for (const org of orgs) {
-    const today = asOfDateString(instant, org.timezone);
+    const today = asOfDateString(now, org.timezone);
     asOfLabel = today;
     const cutoff = lockCutoffDate(today, org.editWindowDays);
     const candidates = await source.listApprovedMutable(org.id, cutoff);
-    const at = instant instanceof Date ? instant : new Date();
 
     for (const entry of candidates) {
       considered += 1;

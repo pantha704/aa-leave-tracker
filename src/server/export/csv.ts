@@ -2,8 +2,11 @@ export function minutesToHours(minutes: number): string {
   return (minutes / 60).toFixed(2);
 }
 
+const NUMERIC_CELL = /^-?\d+(\.\d+)?$/;
+
 /** Neutralize Excel/Sheets formula injection on text cells (`=`, `+`, `-`, `@`, tab, CR). */
 export function neutralizeCsvFormula(value: string): string {
+  if (NUMERIC_CELL.test(value)) return value;
   if (/^[=+\-@\t\r]/.test(value)) {
     return `'${value}`;
   }

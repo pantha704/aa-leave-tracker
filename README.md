@@ -64,4 +64,8 @@ Email + password via Better Auth. There is no public registration endpoint.
 - Session cookies are `httpOnly`, `SameSite=Lax`, and `Secure` when `NODE_ENV=production`.
 - In production set `BETTER_AUTH_URL` to an `https://` origin.
 
+## Email
+
+Leave pending mail is optional. Set `RESEND_API_KEY` or `SMTP_URL` (and `EMAIL_FROM`) to send one `leave.pending` email to active admin addresses. If neither key is set, `org_settings.email_enabled` stays false and every `/admin` page shows: **Email is off; check pending daily.** A send failure is logged and does not fail submit.
+
 Do not commit `.env`.

@@ -50,6 +50,11 @@ import type {
   Portion,
 } from "@/server/policy/types";
 import { getDb } from "@/server/db";
+import {
+  notifyPendingLeaveEntry,
+  tryNotifyLeavePending,
+  type PendingLeaveEntryNotice,
+} from "@/server/notify";
 import { expandToLeaveDays } from "./expand";
 
 const DECIMAL_HOURS = /^-?\d+(\.\d+)?$/;
@@ -200,6 +205,7 @@ export type SubmitLeaveOptions = {
   now?: Date;
   /** Test clock only. Production derives org-local today from `now`. */
   today?: string;
+  notify?: (input: PendingLeaveEntryNotice) => Promise<unknown>;
 };
 
 function fail(status: LeaveFailStatus, code: string, message: string): LeaveFail {
@@ -476,7 +482,7 @@ export async function submitLeave(
   const now = options.now ?? new Date();
 
   try {
-    return await store.withEmployeeLock(input.employeeId, async () => {
+    const result = await store.withEmployeeLock(input.employeeId, async () => {
       const loaded = await store.loadSubmitSnapshot({
         employeeId: input.employeeId,
         leaveTypeId: input.leaveTypeId,
@@ -635,6 +641,16 @@ export async function submitLeave(
         ledgerPosted: evaluation.postsLedger,
       };
     });
+    if (result.ok && result.entry.status === "pending") {
+      await tryNotifyLeavePending(options.notify ?? notifyPendingLeaveEntry, {
+        employeeId: result.entry.employeeId,
+        leaveTypeId: result.entry.leaveTypeId,
+        entryId: result.entry.id,
+        startDate: result.entry.startDate,
+        endDate: result.entry.endDate,
+      });
+    }
+    return result;
   } catch (err) {
     if (isOccupancyConflict(err)) {
       return fail(409, "OVERLAP", "A consuming leave day already occupies that date and portion.");

@@ -217,6 +217,28 @@ describe("submitLeave", () => {
     expect(result).toMatchObject({ ok: false, status: 422, code: "NO_POLICY" });
   });
 
+  it("still returns 200 when leave.pending notify throws", async () => {
+    const store = world();
+    const error = console.error;
+    console.error = () => {};
+    try {
+      const result = await submit(
+        store,
+        {},
+        {
+          notify: async () => {
+            throw new Error("resend down");
+          },
+        },
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.entry.status).toBe("pending");
+    } finally {
+      console.error = error;
+    }
+  });
+
   it("blocks writes when readonly / self-log / requests flags are off", async () => {
     const readonly = await submit(world({ orgSettings: { appReadonly: true } }), {
       startDate: "2026-06-08",

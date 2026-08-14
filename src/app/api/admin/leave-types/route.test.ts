@@ -111,7 +111,7 @@ describe("GET/POST /api/admin/leave-types", () => {
       },
     );
     expect(res.status).toBe(400);
-    await expect(res.json()).resolves.toEqual({ error: "invalid JSON body" });
+    await expect(res.json()).resolves.toEqual({ error: "invalid JSON" });
   });
 });
 

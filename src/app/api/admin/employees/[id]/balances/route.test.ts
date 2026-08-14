@@ -43,6 +43,26 @@ describe("GET /api/admin/employees/:id/balances", () => {
     ]);
   });
 
+  it("non-uuid IDOR guess still returns 403 when audit insert fails", async () => {
+    const prev = console.error;
+    console.error = () => {};
+    try {
+    const res = await getAdminEmployeeBalances(req("not-a-uuid"), "not-a-uuid", {
+      getAuthzActor: async () => ({ id: "alice", role: "employee" }),
+      writeAudit: async () => {
+        throw new Error("invalid input syntax for type uuid");
+      },
+      loadLedger: async () => {
+        throw new Error("must not load");
+      },
+    });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "forbidden" });
+    } finally {
+      console.error = prev;
+    }
+  });
+
   it("admin can GET another employee and the read is audited", async () => {
     const events: AuditEventInput[] = [];
     const res = await getAdminEmployeeBalances(req("bob"), "bob", {

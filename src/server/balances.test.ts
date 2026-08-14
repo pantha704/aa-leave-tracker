@@ -115,6 +115,48 @@ describe("admin balance reads", () => {
     expect(events[0]?.action).toBe("idor.denied");
   });
 
+  it("still returns 403 when audit insert throws (non-uuid guess)", async () => {
+    const prev = console.error;
+    console.error = () => {};
+    try {
+    const result = await readEmployeeBalances({
+      actor: alice,
+      targetEmployeeId: "not-a-uuid",
+      requireAdmin: true,
+      writeAudit: async () => {
+        throw new Error("invalid input syntax for type uuid");
+      },
+      loadLedger: async () => {
+        throw new Error("must not load");
+      },
+    });
+    expect(result.status).toBe(403);
+    expect(result.body).toEqual({ error: "forbidden" });
+    } finally {
+      console.error = prev;
+    }
+  });
+
+  it("still returns 200 when a successful admin read fails to audit", async () => {
+    const prev = console.error;
+    console.error = () => {};
+    try {
+    const result = await readEmployeeBalances({
+      actor: admin,
+      targetEmployeeId: bob.id,
+      requireAdmin: true,
+      writeAudit: async () => {
+        throw new Error("audit down");
+      },
+      loadLedger: async () => [bobLine],
+    });
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({ employeeId: bob.id, ledger: [bobLine] });
+    } finally {
+      console.error = prev;
+    }
+  });
+
   it("returns 401 when there is no actor", async () => {
     const result = await readEmployeeBalances({
       actor: null,

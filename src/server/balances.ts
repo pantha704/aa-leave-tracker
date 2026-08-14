@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { ledgerEntries } from "@/db/schema";
-import type { AuditWriter } from "./audit";
+import { tryWriteAudit, type AuditWriter } from "./audit";
 import { canAdmin, canReadEmployee, type AuthzActor } from "./authz";
 import { getDb } from "./db";
 
@@ -48,7 +48,7 @@ export async function readEmployeeBalances(input: {
   }
 
   if (requireAdmin && !canAdmin(actor)) {
-    await writeAudit({
+    await tryWriteAudit(writeAudit, {
       actorId: actor.id,
       action: "idor.denied",
       entityType: "employee",
@@ -59,7 +59,7 @@ export async function readEmployeeBalances(input: {
   }
 
   if (!canReadEmployee(actor, targetEmployeeId)) {
-    await writeAudit({
+    await tryWriteAudit(writeAudit, {
       actorId: actor.id,
       action: "idor.denied",
       entityType: "employee",
@@ -72,7 +72,7 @@ export async function readEmployeeBalances(input: {
   const ledger = await loadLedger(targetEmployeeId);
 
   if (canAdmin(actor) && actor.id !== targetEmployeeId) {
-    await writeAudit({
+    await tryWriteAudit(writeAudit, {
       actorId: actor.id,
       action: "employee.balances.read",
       entityType: "employee",

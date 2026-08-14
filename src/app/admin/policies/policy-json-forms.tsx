@@ -1,14 +1,12 @@
 "use client";
 
 import { useActionState } from "react";
-import { assignPolicyAction, savePolicyAction, type PolicyFormState } from "./actions";
+import { assignPolicyAction, type PolicyFormState } from "./actions";
 
 const fieldClass =
   "rounded border border-zinc-300 bg-transparent px-2 py-1.5 text-sm dark:border-zinc-700";
 const buttonClass =
   "rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900";
-const textareaClass =
-  "min-h-80 w-full rounded border border-zinc-300 bg-transparent px-3 py-2 font-mono text-xs leading-5 dark:border-zinc-700";
 
 function FormAlert({ state }: { state: PolicyFormState }) {
   if (!state) return null;
@@ -23,30 +21,6 @@ function FormAlert({ state }: { state: PolicyFormState }) {
     <p className="text-sm text-red-600" role="alert">
       {state.error}
     </p>
-  );
-}
-
-export function PolicyJsonForm({
-  id,
-  json,
-}: {
-  id?: string;
-  json: string;
-}) {
-  const [state, action, pending] = useActionState(savePolicyAction, undefined);
-
-  return (
-    <form action={action} className="flex flex-col gap-3">
-      {id ? <input type="hidden" name="id" value={id} /> : null}
-      <label className="flex flex-col gap-1 text-xs">
-        Policy JSON
-        <textarea className={textareaClass} name="json" defaultValue={json} spellCheck={false} />
-      </label>
-      <FormAlert state={state} />
-      <button className={`${buttonClass} w-fit`} type="submit" disabled={pending}>
-        {id ? "Save policy" : "Create policy"}
-      </button>
-    </form>
   );
 }
 

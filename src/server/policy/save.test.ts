@@ -5,6 +5,7 @@ import {
   parseAssignmentInput,
   parsePolicyInput,
   parsePolicyJson,
+  policyInputFromFormData,
   updatePolicy,
   type PolicyPersistence,
   type PolicyRecord,
@@ -100,6 +101,68 @@ describe("parsePolicyInput", () => {
 describe("parsePolicyJson", () => {
   it("rejects invalid JSON", () => {
     expect(parsePolicyJson("{")).toEqual({ ok: false, error: "invalid JSON" });
+  });
+});
+
+describe("policyInputFromFormData", () => {
+  function form(entries: Record<string, string | string[]>): FormData {
+    const data = new FormData();
+    for (const [key, value] of Object.entries(entries)) {
+      if (Array.isArray(value)) {
+        for (const item of value) data.append(key, item);
+      } else {
+        data.set(key, value);
+      }
+    }
+    return data;
+  }
+
+  it("maps grant, caps, approval flags, and tenure bands", () => {
+    const parsed = policyInputFromFormData(
+      form({
+        leave_type_id: LEAVE_TYPE_ID,
+        name: "Vacation / Unpaid 17d monthly",
+        grant_mode: "periodic",
+        grant_minutes: "8160",
+        periodic_cadence: "monthly",
+        periodic_minutes: "680",
+        accrual_stop_minutes: "8160",
+        take_ceiling_minutes: "8160",
+        carryover_max_minutes: "2400",
+        allow_forfeit: "false",
+        negative_allowed: "true",
+        negative_floor_minutes: "-240",
+        approval_for_request: "admin",
+        approval_for_log: "none",
+        effective_from: "2026-01-01",
+        tenure_min_years: ["0", "5"],
+        tenure_max_years: ["4", ""],
+        tenure_grant_minutes: ["8160", "9600"],
+      }),
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.accrual_stop_minutes).toBe(8160);
+    expect(parsed.value.take_ceiling_minutes).toBe(8160);
+    expect(parsed.value.carryover_max_minutes).toBe(2400);
+    expect(parsed.value.negative_allowed).toBe(true);
+    expect(parsed.value.tenure_bands).toEqual([
+      { min_years: 0, max_years: 4, grant_minutes: 8160 },
+      { min_years: 5, max_years: null, grant_minutes: 9600 },
+    ]);
+  });
+
+  it("saves from the advanced JSON field when mode=json", () => {
+    const parsed = policyInputFromFormData(
+      form({
+        mode: "json",
+        json: JSON.stringify(validPolicy({ name: "From JSON" })),
+      }),
+    );
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.name).toBe("From JSON");
+    }
   });
 });
 

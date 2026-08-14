@@ -1,22 +1,28 @@
 import { requireAdmin } from "@/server/auth";
+import { DEMO_WORKDAY_MINUTES } from "@/db/demo-policy";
 import {
   listAssignments,
   listOrgEmployees,
   listOrgLeaveTypes,
+  listOrgPreviewMeta,
   listPolicies,
   newPolicyJson,
   policyToEditorJson,
 } from "@/server/policy/save";
-import { AssignPolicyForm, PolicyJsonForm } from "./policy-json-forms";
+import { AssignPolicyForm } from "./policy-json-forms";
+import { PolicyForm } from "./policy-form";
 
 export default async function AdminPoliciesPage() {
   const { employee } = await requireAdmin();
-  const [policyRows, people, assignments, types] = await Promise.all([
+  const [policyRows, people, assignments, types, meta] = await Promise.all([
     listPolicies(employee.orgId),
     listOrgEmployees(employee.orgId),
     listAssignments(employee.orgId),
     listOrgLeaveTypes(employee.orgId),
+    listOrgPreviewMeta(employee.orgId),
   ]);
+  const today = meta?.today ?? new Date().toISOString().slice(0, 10);
+  const workdayMinutes = meta?.workdayMinutes ?? DEMO_WORKDAY_MINUTES;
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-6 py-10">
@@ -28,30 +34,23 @@ export default async function AdminPoliciesPage() {
         </p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">Policies</h1>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          Paste JSON to change caps. One leave type per policy. Assignments update in place per
-          employee+type.
+          Grant, accrual-stop, take-ceiling, and carryover as separate minutes. One leave type per
+          policy. Assignments update in place per employee+type.
         </p>
       </header>
 
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">New policy</h2>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Set <span className="font-mono">leave_type_id</span> to one of these types (required, one
-          type per policy):
-        </p>
         {types.length === 0 ? (
           <p className="text-sm text-zinc-600 dark:text-zinc-400">No leave types in this org yet.</p>
-        ) : (
-          <ul className="font-mono text-xs text-zinc-600 dark:text-zinc-400">
-            {types.map((type) => (
-              <li key={type.id}>
-                {type.id} — {type.code} ({type.name})
-              </li>
-            ))}
-          </ul>
-        )}
-        <PolicyJsonForm
-          json={newPolicyJson(types.length === 1 ? types[0].id : "")}
+        ) : null}
+        <PolicyForm
+          key={policyRows.map((row) => row.id).join("-")}
+          initialJson={newPolicyJson(types.length === 1 ? types[0].id : "")}
+          leaveTypes={types}
+          employees={people}
+          today={today}
+          workdayMinutes={workdayMinutes}
         />
       </section>
 
@@ -61,10 +60,18 @@ export default async function AdminPoliciesPage() {
           <p className="text-sm text-zinc-600 dark:text-zinc-400">No policies yet.</p>
         ) : (
           policyRows.map((policy) => (
-            <div key={policy.id} className="flex flex-col gap-2">
+            <div key={policy.id} className="flex flex-col gap-2 border-b border-zinc-100 pb-6 dark:border-zinc-900">
               <h3 className="text-sm font-medium">{policy.name}</h3>
               <p className="font-mono text-xs text-zinc-600 dark:text-zinc-400">{policy.id}</p>
-              <PolicyJsonForm id={policy.id} json={policyToEditorJson(policy)} />
+              <PolicyForm
+                id={policy.id}
+                policy={policy}
+                initialJson={policyToEditorJson(policy)}
+                leaveTypes={types}
+                employees={people}
+                today={today}
+                workdayMinutes={workdayMinutes}
+              />
             </div>
           ))
         )}

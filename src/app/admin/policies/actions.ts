@@ -2,11 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/server/auth";
+import type { Balance } from "@/server/ledger/balance";
 import {
   assignPolicy,
   createPolicy,
+  loadSampleBalance,
   parseAssignmentInput,
-  parsePolicyJson,
+  policyInputFromFormData,
   updatePolicy,
 } from "@/server/policy/save";
 
@@ -21,7 +23,7 @@ export async function savePolicyAction(
   formData: FormData,
 ): Promise<PolicyFormState> {
   const { employee } = await requireAdmin();
-  const parsed = parsePolicyJson(String(formData.get("json") ?? ""));
+  const parsed = policyInputFromFormData(formData);
   if (!parsed.ok) return { ok: false, error: parsed.error };
 
   const id = String(formData.get("id") ?? "").trim();
@@ -50,4 +52,16 @@ export async function assignPolicyAction(
   if (!result.ok) return { ok: false, error: result.error };
   refresh();
   return { ok: true };
+}
+
+export type SampleBalanceResult =
+  | { ok: true; balance: Balance }
+  | { ok: false; error: string };
+
+export async function previewSampleBalanceAction(
+  employeeId: string,
+  leaveTypeId: string,
+): Promise<SampleBalanceResult> {
+  const { employee } = await requireAdmin();
+  return loadSampleBalance(employee.orgId, employeeId, leaveTypeId);
 }

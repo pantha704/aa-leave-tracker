@@ -3,12 +3,17 @@ import { z } from "zod";
 import {
   employees,
   leaveTypes,
+  organizations,
   policies,
   policyAssignments,
   policyTenureBands,
 } from "@/db/schema";
 import { tryWriteAudit, writeAuditEvent, type AuditWriter } from "@/server/audit";
 import { getDb } from "@/server/db";
+import { asOfDateString, getBalance, type Balance } from "@/server/ledger/balance";
+import type { TenureBandInput } from "./grant";
+
+export type { TenureBandInput } from "./grant";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -76,12 +81,6 @@ export const policySaveSchema = z.object({
 });
 
 export type PolicySaveInput = z.infer<typeof policySaveSchema>;
-
-export type TenureBandInput = {
-  minYears: number;
-  maxYears: number | null;
-  grantMinutes: number;
-};
 
 export type PolicyRecord = {
   id: string;
@@ -221,6 +220,73 @@ export function parsePolicyJson(text: string): ParseOk<PolicySaveInput> | ParseE
     return { ok: false, error: "invalid JSON" };
   }
   return parsePolicyInput(raw);
+}
+
+function formText(formData: FormData, name: string): string {
+  return String(formData.get(name) ?? "").trim();
+}
+
+function formBool(formData: FormData, name: string): boolean {
+  const value = formText(formData, name).toLowerCase();
+  return value === "true" || value === "on" || value === "1";
+}
+
+/** Empty optional number → null. Non-numeric strings stay strings so Zod can fail. */
+function formNumber(formData: FormData, name: string): number | string | null {
+  const text = formText(formData, name);
+  if (text === "") return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : text;
+}
+
+function formNumberAt(values: FormDataEntryValue[], index: number): number | string | null {
+  const text = String(values[index] ?? "").trim();
+  if (text === "") return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : text;
+}
+
+export function policyInputFromFormData(formData: FormData): ParseOk<PolicySaveInput> | ParseErr {
+  if (formText(formData, "mode") === "json") {
+    return parsePolicyJson(String(formData.get("json") ?? ""));
+  }
+
+  const minYears = formData.getAll("tenure_min_years");
+  const maxYears = formData.getAll("tenure_max_years");
+  const bandGrants = formData.getAll("tenure_grant_minutes");
+  const rowCount = Math.max(minYears.length, maxYears.length, bandGrants.length);
+  const tenure_bands: unknown[] = [];
+  for (let index = 0; index < rowCount; index++) {
+    const min_years = formNumberAt(minYears, index);
+    const max_years = formNumberAt(maxYears, index);
+    const grant_minutes = formNumberAt(bandGrants, index);
+    if (min_years == null && max_years == null && grant_minutes == null) continue;
+    tenure_bands.push({ min_years, max_years, grant_minutes });
+  }
+
+  return parsePolicyInput({
+    leave_type_id: formText(formData, "leave_type_id"),
+    name: formText(formData, "name"),
+    period: formText(formData, "period") || "calendar_year",
+    grant_mode: formText(formData, "grant_mode"),
+    grant_minutes: formNumber(formData, "grant_minutes"),
+    periodic_cadence: formText(formData, "periodic_cadence") || null,
+    periodic_minutes: formNumber(formData, "periodic_minutes"),
+    accrual_stop_minutes: formNumber(formData, "accrual_stop_minutes"),
+    take_ceiling_minutes: formNumber(formData, "take_ceiling_minutes"),
+    carryover_max_minutes: formNumber(formData, "carryover_max_minutes"),
+    allow_forfeit: formBool(formData, "allow_forfeit"),
+    negative_allowed: formBool(formData, "negative_allowed"),
+    negative_floor_minutes: formNumber(formData, "negative_floor_minutes"),
+    waiting_period_days: formNumber(formData, "waiting_period_days") ?? 0,
+    approval_for_request: formText(formData, "approval_for_request") || "admin",
+    approval_for_log: formText(formData, "approval_for_log") || "none",
+    notice_days: formNumber(formData, "notice_days"),
+    min_increment_minutes: formNumber(formData, "min_increment_minutes") ?? 60,
+    effective_from: formText(formData, "effective_from"),
+    effective_to: formText(formData, "effective_to") || null,
+    tenure_bands,
+  });
 }
 
 export function parseAssignmentInput(raw: unknown): ParseOk<AssignmentSaveInput> | ParseErr {
@@ -456,10 +522,57 @@ export async function listOrgEmployees(orgId: string) {
       id: employees.id,
       name: employees.name,
       email: employees.email,
+      startDate: employees.startDate,
+      workdayMinutes: employees.workdayMinutes,
     })
     .from(employees)
     .where(eq(employees.orgId, orgId))
     .orderBy(employees.name);
+}
+
+export type OrgPreviewMeta = {
+  timezone: string;
+  workdayMinutes: number;
+  today: string;
+};
+
+export async function listOrgPreviewMeta(orgId: string): Promise<OrgPreviewMeta | null> {
+  const [org] = await getDb()
+    .select({
+      timezone: organizations.timezone,
+      workdayMinutes: organizations.standardWorkdayMinutes,
+    })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1);
+  if (!org) return null;
+  return {
+    timezone: org.timezone,
+    workdayMinutes: org.workdayMinutes,
+    today: asOfDateString(new Date(), org.timezone),
+  };
+}
+
+export async function loadSampleBalance(
+  orgId: string,
+  employeeId: string,
+  leaveTypeId: string,
+): Promise<{ ok: true; balance: Balance } | { ok: false; error: string }> {
+  if (!UUID_RE.test(employeeId) || !UUID_RE.test(leaveTypeId)) {
+    return { ok: false, error: "employee_id and leave_type_id must be uuids" };
+  }
+  if (!(await pgPolicyPersistence.employeeInOrg(orgId, employeeId))) {
+    return { ok: false, error: "employee not found in org" };
+  }
+  if (!(await pgPolicyPersistence.leaveTypeInOrg(orgId, leaveTypeId))) {
+    return { ok: false, error: "leave_type_id not found in org" };
+  }
+  try {
+    const balance = await getBalance(getDb(), { employeeId, leaveTypeId, asOf: new Date() });
+    return { ok: true, balance };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "could not load balance" };
+  }
 }
 
 export async function listOrgLeaveTypes(orgId: string) {

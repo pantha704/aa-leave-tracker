@@ -6,6 +6,7 @@ import {
   adjustHoursAction,
   assignPolicyAction,
   decideEntryAction,
+  terminateEmployeeAction,
   type AdminFormState,
 } from "./actions";
 
@@ -174,6 +175,42 @@ export function DecideEntryForm({
         </button>
       ) : null}
       <FormAlert state={state} />
+    </form>
+  );
+}
+
+export function TerminateEmployeeForm({
+  employeeId,
+}: {
+  employeeId: string;
+}) {
+  const [state, action, pending] = useActionState(terminateEmployeeAction, undefined);
+  return (
+    <form action={action} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <input type="hidden" name="employeeId" value={employeeId} />
+      <label className="flex flex-col gap-1 text-xs">
+        End date
+        <input className={fieldClass} name="endDate" type="date" required />
+      </label>
+      <label className="flex flex-col gap-1 text-xs sm:col-span-2">
+        Reason (required)
+        <input className={fieldClass} name="reason" required />
+      </label>
+      <div className="flex flex-wrap items-end gap-3">
+        <button
+          className="rounded bg-red-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
+          type="submit"
+          disabled={pending}
+        >
+          Terminate
+        </button>
+        <FormAlert state={state} />
+        {state?.ok && state.downloadPath ? (
+          <a className="text-sm underline" href={state.downloadPath}>
+            Download termination CSV
+          </a>
+        ) : null}
+      </div>
     </form>
   );
 }

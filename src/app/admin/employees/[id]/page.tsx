@@ -5,6 +5,7 @@ import {
   AdjustHoursForm,
   AssignPolicyForm,
   DecideEntryForm,
+  TerminateEmployeeForm,
 } from "../employee-file-forms";
 
 function daysFromMinutes(minutes: number, workdayMinutes: number): string {
@@ -48,6 +49,20 @@ export default async function AdminEmployeeFilePage({
           </a>
         </p>
       </header>
+
+      {employee.active ? (
+        <section>
+          <h2 className="text-lg font-medium">Terminate</h2>
+          <p className="mt-1 text-xs text-zinc-500">
+            Sets end date, marks inactive, cancels future pending leave, reverses approved usage after
+            the end date, and stamps remaining entries immutable. Grant/accrual jobs must skip
+            inactive employees. CSV columns are ledger_remaining and pro_rata_earned_to_end_date.
+          </p>
+          <div className="mt-3">
+            <TerminateEmployeeForm employeeId={employee.id} />
+          </div>
+        </section>
+      ) : null}
 
       <section>
         <h2 className="text-lg font-medium">Balance</h2>

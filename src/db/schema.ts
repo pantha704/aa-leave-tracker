@@ -61,6 +61,7 @@ export const orgSettings = pgTable("org_settings", {
   selfLogEnabled: boolean("self_log_enabled").notNull().default(true),
   requestsEnabled: boolean("requests_enabled").notNull().default(true),
   teamCalendarEnabled: boolean("team_calendar_enabled").notNull().default(false),
+  /** Jobs that honor this flag must also skip inactive employees (`shouldSkipGrantOrAccrual`). */
   accrualJobEnabled: boolean("accrual_job_enabled").notNull().default(true),
   emailEnabled: boolean("email_enabled").notNull().default(false),
 });

@@ -51,12 +51,13 @@ import type {
   Portion,
 } from "@/server/policy/types";
 import { getDb } from "@/server/db";
+import { APP_READONLY_CODE, APP_READONLY_MESSAGE } from "@/server/settings";
 import { expandToLeaveDays } from "./expand";
 
 const DECIMAL_HOURS = /^-?\d+(\.\d+)?$/;
 const PORTIONS = new Set<Portion>(["full", "am", "pm", "custom"]);
 
-export type LeaveFailStatus = 401 | 403 | 404 | 409 | 422;
+export type LeaveFailStatus = 401 | 403 | 404 | 409 | 422 | 423;
 
 export type LeaveFail = {
   ok: false;
@@ -412,7 +413,7 @@ export function gateOrgWrites(
   intent: Intent,
 ): LeaveFail | null {
   if (settings.appReadonly) {
-    return fail(403, "APP_READONLY", "The application is in read-only mode.");
+    return fail(423, APP_READONLY_CODE, APP_READONLY_MESSAGE);
   }
   if (intent === "log" && !settings.selfLogEnabled) {
     return fail(422, "SELF_LOG_DISABLED", "Self-logging is disabled.");

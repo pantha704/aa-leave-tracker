@@ -23,6 +23,7 @@ import {
 } from "@/server/ledger/balance";
 import { postLedgerEntry, type LedgerRow, type PostLedgerInput } from "@/server/ledger/post";
 import { isInvalidDate, isInvalidText } from "@/server/pg-error";
+import { APP_READONLY_MESSAGE, isAppReadonly as orgIsAppReadonly } from "@/server/settings";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -157,7 +158,7 @@ export type AssignPolicyInput = {
 
 export type AdminFail = {
   ok: false;
-  status: 400 | 401 | 403 | 404 | 409;
+  status: 400 | 401 | 403 | 404 | 409 | 423;
   error: string;
 };
 
@@ -355,6 +356,7 @@ export type EmployeeStore = {
   countPending: (orgId: string) => Promise<number>;
   listPending: (orgId: string) => Promise<PendingEntryRow[]>;
   findLeaveEntryInOrg: (orgId: string, entryId: string) => Promise<LeaveEntryOrgRef | null>;
+  isAppReadonly: (orgId: string) => Promise<boolean>;
 };
 
 const assignmentReturning = {
@@ -708,6 +710,9 @@ export function pgEmployeeStore(db: ReturnType<typeof getDb> = getDb()): Employe
         .where(and(eq(employees.orgId, orgId), eq(leaveEntries.status, "pending")))
         .orderBy(leaveEntries.startDate, employees.name);
     },
+    async isAppReadonly(orgId) {
+      return orgIsAppReadonly(orgId);
+    },
   };
 }
 
@@ -839,6 +844,9 @@ export async function postAdjustment(input: {
   if (!parsed.ok) return { ok: false, status: 400, error: parsed.error };
 
   const store = input.store ?? pgEmployeeStore();
+  if (await store.isAppReadonly(input.orgId)) {
+    return { ok: false, status: 423, error: APP_READONLY_MESSAGE };
+  }
   try {
     const employee = await store.getEmployee(input.orgId, input.employeeId);
     if (!employee) return { ok: false, status: 404, error: "employee not found" };

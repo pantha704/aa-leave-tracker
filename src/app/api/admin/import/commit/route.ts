@@ -54,6 +54,12 @@ export async function postAdminImportCommit(
     deps.store,
   );
   if (!result.ok) {
+    if ("status" in result) {
+      return NextResponse.json(
+        { error: result.error, code: result.code },
+        { status: result.status },
+      );
+    }
     return NextResponse.json({ error: "csv_errors", ...result.dryRun }, { status: 400 });
   }
   return NextResponse.json({

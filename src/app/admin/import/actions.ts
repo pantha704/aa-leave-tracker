@@ -136,6 +136,9 @@ export async function commitImportAction(
     dbImportStore,
   );
   if (!result.ok) {
+    if ("status" in result) {
+      return { ok: false, error: result.error, csv };
+    }
     return {
       ok: false,
       error: `${result.dryRun.errors.length} row error(s)`,

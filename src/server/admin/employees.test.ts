@@ -58,6 +58,7 @@ function store(overrides: Partial<EmployeeStore> = {}): EmployeeStore {
     countPending: unused as EmployeeStore["countPending"],
     listPending: unused as EmployeeStore["listPending"],
     findLeaveEntryInOrg: unused as EmployeeStore["findLeaveEntryInOrg"],
+    isAppReadonly: async () => false,
     ...overrides,
   };
 }
@@ -268,6 +269,27 @@ describe("postAdjustment", () => {
       writeAudit: async () => undefined,
     });
     expect(result).toEqual({ ok: false, status: 404, error: "employee not found" });
+  });
+
+  it("returns 423 when the app is readonly", async () => {
+    const result = await postAdjustment({
+      actor: { id: "admin", role: "admin" },
+      orgId: "org-1",
+      employeeId: PERSON,
+      raw: { leaveTypeId: VACATION, minutes: 60, effectiveOn: "2026-03-01", reason: "fix" },
+      store: store({
+        isAppReadonly: async () => true,
+        postAdjustment: async () => {
+          throw new Error("must not post");
+        },
+      }),
+      writeAudit: async () => undefined,
+    });
+    expect(result).toEqual({
+      ok: false,
+      status: 423,
+      error: "The application is in read-only mode.",
+    });
   });
 });
 

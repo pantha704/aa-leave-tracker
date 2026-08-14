@@ -63,6 +63,7 @@ function memoryStore(): ImportCommitStore & {
     batches,
     entries,
     loadWorld,
+    isAppReadonly: async () => false,
     listBatches: async () => batches,
     applyCommit: async (input) => {
       const first = dryRunImport(input.csv, input.kind, input.map, await loadWorld(), input.options);
@@ -204,6 +205,31 @@ describe("commitImport / reverse", () => {
     );
     expect(result.ok).toBe(false);
     expect(store.ledger.rows).toHaveLength(0);
+    expect(store.batches).toHaveLength(0);
+  });
+
+  it("returns 423 when the app is readonly", async () => {
+    const store = memoryStore();
+    store.isAppReadonly = async () => true;
+    const result = await commitImport(
+      {
+        orgId: "org-1",
+        actor: { id: ADMIN, role: "admin" },
+        kind: "opening",
+        csv: [
+          "email,leave_type,as_of,remaining_hours",
+          "ada@example.com,vacation_unpaid,2026-03-01,10.00",
+        ].join("\n"),
+        map: openingMap,
+      },
+      store,
+      { writeAudit: async () => {} },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      status: 423,
+      code: "APP_READONLY",
+    });
     expect(store.batches).toHaveLength(0);
   });
 });

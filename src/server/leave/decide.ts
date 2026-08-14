@@ -6,6 +6,7 @@ import {
   type PeriodGate,
 } from "@/server/authz";
 import type { LeaveStatus } from "@/server/policy/types";
+import { APP_READONLY_CODE, APP_READONLY_MESSAGE } from "@/server/settings";
 import {
   assertYearlyLimits,
   dbLeaveStore,
@@ -43,7 +44,7 @@ const APPROVE_FROM = new Set<LeaveStatus>(["pending"]);
 const REJECT_FROM = new Set<LeaveStatus>(["pending"]);
 const CANCEL_FROM = new Set<LeaveStatus>(["draft", "pending", "approved"]);
 
-function fail(status: 401 | 403 | 404 | 409 | 422, code: string, message: string): LeaveFail {
+function fail(status: 401 | 403 | 404 | 409 | 422 | 423, code: string, message: string): LeaveFail {
   return { ok: false, status, code, message };
 }
 
@@ -138,8 +139,8 @@ export async function decideLeave(
         return fail(403, "FORBIDDEN", "forbidden");
       }
 
-      if (snap.orgSettings.appReadonly && input.action !== "cancel") {
-        return fail(403, "APP_READONLY", "The application is in read-only mode.");
+      if (snap.orgSettings.appReadonly) {
+        return fail(423, APP_READONLY_CODE, APP_READONLY_MESSAGE);
       }
 
       if (input.action === "approve") {

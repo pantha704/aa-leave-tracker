@@ -23,6 +23,7 @@ import {
   type PostLedgerInput,
 } from "@/server/ledger/post";
 import type { AuthzActor } from "@/server/authz";
+import { APP_READONLY_CODE, APP_READONLY_MESSAGE, isAppReadonly as orgIsAppReadonly } from "@/server/settings";
 import {
   dryRunImport,
   planFirstYearSickGrants,
@@ -65,6 +66,12 @@ export type CommitImportResult =
   | {
       ok: false;
       dryRun: DryRunResult;
+    }
+  | {
+      ok: false;
+      status: 423;
+      code: typeof APP_READONLY_CODE;
+      error: string;
     };
 
 export type ReverseImportResult =
@@ -92,6 +99,7 @@ export type ImportCommitStore = {
     now: Date;
   }) => Promise<ReverseImportResult>;
   listBatches: (orgId: string) => Promise<ImportBatchRecord[]>;
+  isAppReadonly: (orgId: string) => Promise<boolean>;
 };
 
 export async function previewImport(
@@ -111,6 +119,14 @@ export async function commitImport(
   store: ImportCommitStore,
   options: DryRunOptions & { writeAudit?: AuditWriter; now?: Date } = {},
 ): Promise<CommitImportResult> {
+  if (await store.isAppReadonly(input.orgId)) {
+    return {
+      ok: false,
+      status: 423,
+      code: APP_READONLY_CODE,
+      error: APP_READONLY_MESSAGE,
+    };
+  }
   const result = await store.applyCommit({
     orgId: input.orgId,
     actorId: input.actor.id,
@@ -414,6 +430,10 @@ async function writeImportPlan(
 }
 
 export const dbImportStore: ImportCommitStore = {
+  async isAppReadonly(orgId) {
+    return orgIsAppReadonly(orgId);
+  },
+
   async loadWorld(orgId) {
     return loadWorldFrom(getDb(), orgId);
   },

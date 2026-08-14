@@ -4,8 +4,12 @@ import { revalidatePath } from "next/cache";
 import { assignEmployeePolicy, findLeaveEntryInOrg, postAdjustment } from "@/server/admin/employees";
 import { requireAdmin } from "@/server/auth";
 import { decideLeave, type DecideAction } from "@/server/leave/decide";
+import { terminateEmployee } from "@/server/terminate";
 
-export type AdminFormState = { ok: true } | { ok: false; error: string } | undefined;
+export type AdminFormState =
+  | { ok: true; downloadPath?: string }
+  | { ok: false; error: string }
+  | undefined;
 
 const ACTIONS = new Set<DecideAction>(["approve", "reject", "cancel"]);
 
@@ -81,4 +85,24 @@ export async function decideEntryAction(
   if (!result.ok) return { ok: false, error: result.message };
   refresh(employeeId);
   return { ok: true };
+}
+
+export async function terminateEmployeeAction(
+  _prev: AdminFormState,
+  formData: FormData,
+): Promise<AdminFormState> {
+  const { employee } = await requireAdmin();
+  const employeeId = String(formData.get("employeeId") ?? "");
+  const result = await terminateEmployee({
+    actor: { id: employee.id, role: "admin" },
+    orgId: employee.orgId,
+    employeeId,
+    raw: {
+      endDate: String(formData.get("endDate") ?? ""),
+      reason: String(formData.get("reason") ?? ""),
+    },
+  });
+  if (!result.ok) return { ok: false, error: result.error };
+  refresh(employeeId);
+  return { ok: true, downloadPath: result.downloadPath };
 }

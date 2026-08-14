@@ -48,6 +48,7 @@ docker run --name aa-leave-postgres \
 | `bun run db:generate` | Drizzle Kit generate |
 | `bun run db:migrate` | Apply Drizzle migrations |
 | `bun run db:seed` | Seed DEMO org (requires `SEED_TIMEZONE` and `SEED_ADMIN_PASSWORD`) |
+| `bun run job:lock` | Set `immutable_at` on approved entries after the edit window |
 
 ## Auth
 

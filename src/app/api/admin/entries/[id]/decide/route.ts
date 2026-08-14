@@ -6,6 +6,11 @@ import {
   type AdminGateDeps,
 } from "@/server/admin-api";
 import {
+  findLeaveEntryInOrg,
+  isUuid,
+  type LeaveEntryOrgRef,
+} from "@/server/admin/employees";
+import {
   decideLeave,
   type DecideAction,
   type DecideLeaveInput,
@@ -16,11 +21,13 @@ import type { LeaveFail } from "@/server/leave/submit";
 const ACTIONS = new Set<DecideAction>(["approve", "reject", "cancel"]);
 
 export type AdminDecideDeps = AdminGateDeps & {
+  resolveEntry: (orgId: string, entryId: string) => Promise<LeaveEntryOrgRef | null>;
   decide: (input: DecideLeaveInput) => Promise<DecideLeaveSuccess | LeaveFail>;
 };
 
 const defaultDeps: AdminDecideDeps = {
   ...defaultAdminGateDeps,
+  resolveEntry: findLeaveEntryInOrg,
   decide: (input) => decideLeave(input),
 };
 
@@ -47,6 +54,14 @@ export async function postAdminDecide(
   }
   const adminNote = typeof raw.adminNote === "string" ? raw.adminNote : undefined;
   const override = raw.override === true;
+
+  if (!isUuid(entryId)) {
+    return NextResponse.json({ error: "leave entry not found" }, { status: 404 });
+  }
+  const scoped = await deps.resolveEntry(gate.context.orgId, entryId);
+  if (!scoped) {
+    return NextResponse.json({ error: "leave entry not found" }, { status: 404 });
+  }
 
   const result = await deps.decide({
     actor: gate.context.actor,

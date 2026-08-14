@@ -6,6 +6,11 @@ import type { AuthzActor } from "./authz";
 const alice: AuthzActor = { id: "alice", role: "employee" };
 const bob: AuthzActor = { id: "bob", role: "employee" };
 const admin: AuthzActor = { id: "admin", role: "admin" };
+const BOB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+function inOrg1(id: string): (orgId: string, employeeId: string) => Promise<boolean> {
+  return async (orgId, employeeId) => orgId === "org-1" && employeeId === id;
+}
 
 const bobLine: LedgerLine = {
   id: "led-1",
@@ -80,23 +85,43 @@ describe("admin balance reads", () => {
     const { events, writeAudit } = captureAudit();
     const result = await readEmployeeBalances({
       actor: admin,
-      targetEmployeeId: bob.id,
+      targetEmployeeId: BOB,
       requireAdmin: true,
+      actorOrgId: "org-1",
+      employeeInOrg: inOrg1(BOB),
       writeAudit,
       loadLedger: async () => [bobLine],
     });
 
     expect(result.status).toBe(200);
-    expect(result.body).toEqual({ employeeId: bob.id, ledger: [bobLine] });
+    expect(result.body).toEqual({ employeeId: BOB, ledger: [bobLine] });
     expect(events).toEqual([
       {
         actorId: admin.id,
         action: "employee.balances.read",
         entityType: "employee",
-        entityId: bob.id,
+        entityId: BOB,
         after: { lineCount: 1 },
       },
     ]);
+  });
+
+  it("404s when the target is not in the admin's org", async () => {
+    const { events, writeAudit } = captureAudit();
+    const result = await readEmployeeBalances({
+      actor: admin,
+      targetEmployeeId: BOB,
+      requireAdmin: true,
+      actorOrgId: "org-1",
+      employeeInOrg: async () => false,
+      writeAudit,
+      loadLedger: async () => {
+        throw new Error("must not load");
+      },
+    });
+    expect(result.status).toBe(404);
+    expect(result.body).toEqual({ error: "employee not found" });
+    expect(events).toEqual([]);
   });
 
   it("rejects a non-admin on the admin route even for self", async () => {
@@ -143,15 +168,17 @@ describe("admin balance reads", () => {
     try {
     const result = await readEmployeeBalances({
       actor: admin,
-      targetEmployeeId: bob.id,
+      targetEmployeeId: BOB,
       requireAdmin: true,
+      actorOrgId: "org-1",
+      employeeInOrg: inOrg1(BOB),
       writeAudit: async () => {
         throw new Error("audit down");
       },
       loadLedger: async () => [bobLine],
     });
     expect(result.status).toBe(200);
-    expect(result.body).toEqual({ employeeId: bob.id, ledger: [bobLine] });
+    expect(result.body).toEqual({ employeeId: BOB, ledger: [bobLine] });
     } finally {
       console.error = prev;
     }

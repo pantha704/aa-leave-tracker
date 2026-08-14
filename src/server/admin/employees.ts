@@ -13,19 +13,19 @@ import { DEMO_VACATION_TYPE_CODE } from "@/db/demo-policy";
 import { tryWriteAudit, writeAuditEvent, type AuditWriter } from "@/server/audit";
 import { canAdjustLedger, type AuthzActor } from "@/server/authz";
 import { getDb } from "@/server/db";
+import { parseIsoDate } from "@/server/holidays/csv";
 import {
   asOfDateString,
   computeBalance,
-  requireIsoDate,
   type Balance,
   type LedgerSumRow,
   type PendingEntrySumRow,
 } from "@/server/ledger/balance";
 import { postLedgerEntry, type LedgerRow, type PostLedgerInput } from "@/server/ledger/post";
+import { isInvalidDate, isInvalidText } from "@/server/pg-error";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ISO_DATE = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const DECIMAL_HOURS = /^-?\d+(\.\d+)?$/;
 
 export function minutesToHours(minutes: number): string {
@@ -161,8 +161,16 @@ export type AdminFail = {
   error: string;
 };
 
-function isUuid(value: string): boolean {
+export function isUuid(value: string): boolean {
   return UUID_RE.test(value);
+}
+
+export type LeaveEntryOrgRef = { entryId: string; employeeId: string };
+
+function writeInputError(err: unknown): AdminFail | null {
+  if (isInvalidText(err)) return { ok: false, status: 404, error: "employee not found" };
+  if (isInvalidDate(err)) return { ok: false, status: 400, error: "invalid date" };
+  return null;
 }
 
 function escapeIlike(value: string): string {
@@ -190,12 +198,8 @@ export function parseAdjustInput(raw: unknown):
   const effectiveOn = String(firstString(raw, "effectiveOn") ?? "").trim();
   const reason = String(firstString(raw, "reason") ?? "").trim();
   if (!isUuid(leaveTypeId)) return { ok: false, error: "leaveTypeId must be a uuid" };
-  if (!ISO_DATE.test(effectiveOn)) return { ok: false, error: "effectiveOn must be YYYY-MM-DD" };
-  try {
-    requireIsoDate(effectiveOn, "effectiveOn");
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : "invalid effectiveOn" };
-  }
+  const effective = parseIsoDate(effectiveOn);
+  if (!effective) return { ok: false, error: "effectiveOn must be YYYY-MM-DD" };
   if (!reason) return { ok: false, error: "reason is required" };
 
   let minutes: number;
@@ -213,7 +217,7 @@ export function parseAdjustInput(raw: unknown):
   }
   if (minutes === 0) return { ok: false, error: "minutes must be non-zero" };
 
-  return { ok: true, value: { leaveTypeId, minutes, effectiveOn, reason } };
+  return { ok: true, value: { leaveTypeId, minutes, effectiveOn: effective, reason } };
 }
 
 export function parseAssignPolicyInput(raw: unknown):
@@ -225,10 +229,12 @@ export function parseAssignPolicyInput(raw: unknown):
   const validTo =
     validToRaw == null || String(validToRaw).trim() === "" ? null : String(validToRaw).trim();
   if (!isUuid(policyId)) return { ok: false, error: "policyId must be a uuid" };
-  if (!ISO_DATE.test(validFrom)) return { ok: false, error: "validFrom must be YYYY-MM-DD" };
-  if (validTo && !ISO_DATE.test(validTo)) return { ok: false, error: "validTo must be YYYY-MM-DD" };
-  if (validTo && validTo < validFrom) return { ok: false, error: "validTo must be on or after validFrom" };
-  return { ok: true, value: { policyId, validFrom, validTo } };
+  const from = parseIsoDate(validFrom);
+  if (!from) return { ok: false, error: "validFrom must be YYYY-MM-DD" };
+  const to = validTo == null ? null : parseIsoDate(validTo);
+  if (validTo && !to) return { ok: false, error: "validTo must be YYYY-MM-DD" };
+  if (to && to < from) return { ok: false, error: "validTo must be on or after validFrom" };
+  return { ok: true, value: { policyId, validFrom: from, validTo: to } };
 }
 
 export function buildRosterRows(input: {
@@ -348,6 +354,7 @@ export type EmployeeStore = {
   }) => Promise<FileAssignment>;
   countPending: (orgId: string) => Promise<number>;
   listPending: (orgId: string) => Promise<PendingEntryRow[]>;
+  findLeaveEntryInOrg: (orgId: string, entryId: string) => Promise<LeaveEntryOrgRef | null>;
 };
 
 const assignmentReturning = {
@@ -452,7 +459,9 @@ export function pgEmployeeStore(db: ReturnType<typeof getDb> = getDb()): Employe
           lastEntryDate: max(leaveEntries.endDate),
         })
         .from(leaveEntries)
-        .where(inArray(leaveEntries.employeeId, employeeIds))
+        .where(
+          and(inArray(leaveEntries.employeeId, employeeIds), eq(leaveEntries.status, "approved")),
+        )
         .groupBy(leaveEntries.employeeId);
       for (const row of rows) {
         map.set(row.employeeId, row.lastEntryDate);
@@ -460,6 +469,7 @@ export function pgEmployeeStore(db: ReturnType<typeof getDb> = getDb()): Employe
       return map;
     },
     async getEmployee(orgId, employeeId) {
+      if (!isUuid(orgId) || !isUuid(employeeId)) return null;
       const [row] = await db
         .select({
           id: employees.id,
@@ -601,6 +611,7 @@ export function pgEmployeeStore(db: ReturnType<typeof getDb> = getDb()): Employe
         );
     },
     async leaveTypeInOrg(orgId, leaveTypeId) {
+      if (!isUuid(orgId) || !isUuid(leaveTypeId)) return false;
       const [row] = await db
         .select({ id: leaveTypes.id })
         .from(leaveTypes)
@@ -620,6 +631,7 @@ export function pgEmployeeStore(db: ReturnType<typeof getDb> = getDb()): Employe
       return postLedgerEntry(db, input);
     },
     async getPolicyRef(orgId, policyId) {
+      if (!isUuid(orgId) || !isUuid(policyId)) return null;
       const [row] = await db
         .select({ id: policies.id, leaveTypeId: policies.leaveTypeId })
         .from(policies)
@@ -663,6 +675,19 @@ export function pgEmployeeStore(db: ReturnType<typeof getDb> = getDb()): Employe
         .innerJoin(employees, eq(employees.id, leaveEntries.employeeId))
         .where(and(eq(employees.orgId, orgId), eq(leaveEntries.status, "pending")));
       return Number(row?.n ?? 0);
+    },
+    async findLeaveEntryInOrg(orgId, entryId) {
+      if (!isUuid(orgId) || !isUuid(entryId)) return null;
+      const [row] = await db
+        .select({
+          entryId: leaveEntries.id,
+          employeeId: leaveEntries.employeeId,
+        })
+        .from(leaveEntries)
+        .innerJoin(employees, eq(employees.id, leaveEntries.employeeId))
+        .where(and(eq(leaveEntries.id, entryId), eq(employees.orgId, orgId)))
+        .limit(1);
+      return row ?? null;
     },
     async listPending(orgId) {
       return db
@@ -721,6 +746,7 @@ export async function loadEmployeeFile(input: {
   asOf?: Date | string;
   store?: EmployeeStore;
 }): Promise<EmployeeFile | null> {
+  if (!isUuid(input.orgId) || !isUuid(input.employeeId)) return null;
   const store = input.store ?? pgEmployeeStore();
   const employee = await store.getEmployee(input.orgId, input.employeeId);
   if (!employee) return null;
@@ -778,6 +804,24 @@ export async function listPendingEntries(
   return store.listPending(orgId);
 }
 
+export async function findLeaveEntryInOrg(
+  orgId: string,
+  entryId: string,
+  store: EmployeeStore = pgEmployeeStore(),
+): Promise<LeaveEntryOrgRef | null> {
+  if (!isUuid(orgId) || !isUuid(entryId)) return null;
+  return store.findLeaveEntryInOrg(orgId, entryId);
+}
+
+export async function employeeInOrg(
+  orgId: string,
+  employeeId: string,
+  store: EmployeeStore = pgEmployeeStore(),
+): Promise<boolean> {
+  if (!isUuid(orgId) || !isUuid(employeeId)) return false;
+  return Boolean(await store.getEmployee(orgId, employeeId));
+}
+
 export async function postAdjustment(input: {
   actor: AuthzActor | null;
   orgId: string;
@@ -789,47 +833,55 @@ export async function postAdjustment(input: {
   if (!input.actor) return { ok: false, status: 401, error: "unauthenticated" };
   if (!canAdjustLedger(input.actor)) return { ok: false, status: 403, error: "forbidden" };
 
+  if (!isUuid(input.employeeId)) return { ok: false, status: 404, error: "employee not found" };
+
   const parsed = parseAdjustInput(input.raw);
   if (!parsed.ok) return { ok: false, status: 400, error: parsed.error };
 
   const store = input.store ?? pgEmployeeStore();
-  const employee = await store.getEmployee(input.orgId, input.employeeId);
-  if (!employee) return { ok: false, status: 404, error: "employee not found" };
-  if (!(await store.leaveTypeInOrg(input.orgId, parsed.value.leaveTypeId))) {
-    return { ok: false, status: 400, error: "leave type not found in org" };
-  }
+  try {
+    const employee = await store.getEmployee(input.orgId, input.employeeId);
+    if (!employee) return { ok: false, status: 404, error: "employee not found" };
+    if (!(await store.leaveTypeInOrg(input.orgId, parsed.value.leaveTypeId))) {
+      return { ok: false, status: 400, error: "leave type not found in org" };
+    }
 
-  const year = Number(parsed.value.effectiveOn.slice(0, 4));
-  const period = await store.periodStatus(input.orgId, year);
-  if (period === "closed" || period === "closing") {
-    return { ok: false, status: 409, error: "period is not open" };
-  }
+    const year = Number(parsed.value.effectiveOn.slice(0, 4));
+    const period = await store.periodStatus(input.orgId, year);
+    if (period === "closed" || period === "closing") {
+      return { ok: false, status: 409, error: "period is not open" };
+    }
 
-  const row = await store.postAdjustment({
-    employeeId: employee.id,
-    leaveTypeId: parsed.value.leaveTypeId,
-    kind: "adjustment",
-    minutes: parsed.value.minutes,
-    effectiveOn: parsed.value.effectiveOn,
-    reason: parsed.value.reason,
-    createdBy: input.actor.id,
-  });
-
-  await tryWriteAudit(input.writeAudit ?? writeAuditEvent, {
-    actorId: input.actor.id,
-    action: "ledger.adjust",
-    entityType: "ledger_entry",
-    entityId: row.id,
-    after: {
+    const row = await store.postAdjustment({
       employeeId: employee.id,
       leaveTypeId: parsed.value.leaveTypeId,
-      minutes: row.minutes,
+      kind: "adjustment",
+      minutes: parsed.value.minutes,
       effectiveOn: parsed.value.effectiveOn,
       reason: parsed.value.reason,
-    },
-  });
+      createdBy: input.actor.id,
+    });
 
-  return { ok: true, row };
+    await tryWriteAudit(input.writeAudit ?? writeAuditEvent, {
+      actorId: input.actor.id,
+      action: "ledger.adjust",
+      entityType: "ledger_entry",
+      entityId: row.id,
+      after: {
+        employeeId: employee.id,
+        leaveTypeId: parsed.value.leaveTypeId,
+        minutes: row.minutes,
+        effectiveOn: parsed.value.effectiveOn,
+        reason: parsed.value.reason,
+      },
+    });
+
+    return { ok: true, row };
+  } catch (err) {
+    const mapped = writeInputError(err);
+    if (mapped) return mapped;
+    throw err;
+  }
 }
 
 export async function assignEmployeePolicy(input: {
@@ -843,30 +895,38 @@ export async function assignEmployeePolicy(input: {
   if (!input.actor) return { ok: false, status: 401, error: "unauthenticated" };
   if (!canAdjustLedger(input.actor)) return { ok: false, status: 403, error: "forbidden" };
 
+  if (!isUuid(input.employeeId)) return { ok: false, status: 404, error: "employee not found" };
+
   const parsed = parseAssignPolicyInput(input.raw);
   if (!parsed.ok) return { ok: false, status: 400, error: parsed.error };
 
   const store = input.store ?? pgEmployeeStore();
-  const employee = await store.getEmployee(input.orgId, input.employeeId);
-  if (!employee) return { ok: false, status: 404, error: "employee not found" };
-  const policy = await store.getPolicyRef(input.orgId, parsed.value.policyId);
-  if (!policy) return { ok: false, status: 404, error: "policy not found" };
+  try {
+    const employee = await store.getEmployee(input.orgId, input.employeeId);
+    if (!employee) return { ok: false, status: 404, error: "employee not found" };
+    const policy = await store.getPolicyRef(input.orgId, parsed.value.policyId);
+    if (!policy) return { ok: false, status: 404, error: "policy not found" };
 
-  const assignment = await store.upsertAssignment({
-    employeeId: employee.id,
-    policyId: policy.id,
-    leaveTypeId: policy.leaveTypeId,
-    validFrom: parsed.value.validFrom,
-    validTo: parsed.value.validTo ?? null,
-  });
+    const assignment = await store.upsertAssignment({
+      employeeId: employee.id,
+      policyId: policy.id,
+      leaveTypeId: policy.leaveTypeId,
+      validFrom: parsed.value.validFrom,
+      validTo: parsed.value.validTo ?? null,
+    });
 
-  await tryWriteAudit(input.writeAudit ?? writeAuditEvent, {
-    actorId: input.actor.id,
-    action: "policy.assigned",
-    entityType: "policy_assignment",
-    entityId: assignment.id,
-    after: assignment,
-  });
+    await tryWriteAudit(input.writeAudit ?? writeAuditEvent, {
+      actorId: input.actor.id,
+      action: "policy.assigned",
+      entityType: "policy_assignment",
+      entityId: assignment.id,
+      after: assignment,
+    });
 
-  return { ok: true, assignment };
+    return { ok: true, assignment };
+  } catch (err) {
+    const mapped = writeInputError(err);
+    if (mapped) return mapped;
+    throw err;
+  }
 }

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { assignEmployeePolicy, postAdjustment } from "@/server/admin/employees";
+import { assignEmployeePolicy, findLeaveEntryInOrg, postAdjustment } from "@/server/admin/employees";
 import { requireAdmin } from "@/server/auth";
 import { decideLeave, type DecideAction } from "@/server/leave/decide";
 
@@ -67,6 +67,9 @@ export async function decideEntryAction(
   const employeeId = String(formData.get("employeeId") ?? "");
   const action = String(formData.get("action") ?? "") as DecideAction;
   if (!ACTIONS.has(action)) return { ok: false, error: "invalid action" };
+
+  const scoped = await findLeaveEntryInOrg(employee.orgId, entryId);
+  if (!scoped) return { ok: false, error: "leave entry not found" };
 
   const result = await decideLeave({
     actor: { id: employee.id, role: "admin" },

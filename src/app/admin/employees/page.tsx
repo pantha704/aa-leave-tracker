@@ -59,16 +59,28 @@ export default async function AdminEmployeesPage({
                 rows.map((row) => (
                   <tr key={row.id} className="border-b border-zinc-100 dark:border-zinc-900">
                     <td className="py-2 pr-4">
-                      <a className="underline" href={`/admin/employees/${row.id}`}>
+                      <a className="block underline" href={`/admin/employees/${row.id}`}>
                         {row.name}
+                        <span className="block text-xs font-normal text-zinc-500 no-underline">
+                          {row.email}
+                        </span>
                       </a>
-                      <div className="text-xs text-zinc-500">{row.email}</div>
                     </td>
-                    <td className="py-2 pr-4">{row.employmentType}</td>
+                    <td className="py-2 pr-4">
+                      <a className="block" href={`/admin/employees/${row.id}`}>
+                        {row.employmentType}
+                      </a>
+                    </td>
                     <td className="py-2 pr-4 font-mono">
-                      {row.remainingVacationHours ?? "—"}
+                      <a className="block" href={`/admin/employees/${row.id}`}>
+                        {row.remainingVacationHours ?? "—"}
+                      </a>
                     </td>
-                    <td className="py-2 font-mono">{row.lastEntryDate ?? "—"}</td>
+                    <td className="py-2 font-mono">
+                      <a className="block" href={`/admin/employees/${row.id}`}>
+                        {row.lastEntryDate ?? "—"}
+                      </a>
+                    </td>
                   </tr>
                 ))
               )}

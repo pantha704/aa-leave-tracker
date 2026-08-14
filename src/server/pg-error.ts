@@ -16,3 +16,12 @@ export function isUniqueViolation(err: unknown): boolean {
 export function isForeignKeyViolation(err: unknown): boolean {
   return pgErrorCode(err) === "23503";
 }
+
+export function isInvalidText(err: unknown): boolean {
+  return pgErrorCode(err) === "22P02";
+}
+
+export function isInvalidDate(err: unknown): boolean {
+  const code = pgErrorCode(err);
+  return code === "22007" || code === "22008";
+}

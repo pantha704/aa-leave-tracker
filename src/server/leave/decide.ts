@@ -1,4 +1,4 @@
-import { tryWriteAudit, writeAuditEvent, type AuditWriter } from "@/server/audit";
+import { asAuditUuid, tryWriteAudit, writeAuditEvent, type AuditWriter } from "@/server/audit";
 import {
   canAdmin,
   canCancelEntry,
@@ -91,6 +91,7 @@ export async function decideLeave(
 
   const store = options.store ?? dbLeaveStore;
   const now = options.now ?? new Date();
+  if (!asAuditUuid(input.entryId)) return fail(404, "NOT_FOUND", "leave entry not found");
   const found = await store.getEntry(input.entryId);
   if (!found) return fail(404, "NOT_FOUND", "leave entry not found");
 

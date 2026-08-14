@@ -57,6 +57,7 @@ function store(overrides: Partial<EmployeeStore> = {}): EmployeeStore {
     upsertAssignment: unused as EmployeeStore["upsertAssignment"],
     countPending: unused as EmployeeStore["countPending"],
     listPending: unused as EmployeeStore["listPending"],
+    findLeaveEntryInOrg: unused as EmployeeStore["findLeaveEntryInOrg"],
     ...overrides,
   };
 }
@@ -71,6 +72,17 @@ describe("parseAdjustInput", () => {
         reason: "  ",
       }),
     ).toEqual({ ok: false, error: "reason is required" });
+  });
+
+  it("rejects impossible calendar dates", () => {
+    expect(
+      parseAdjustInput({
+        leaveTypeId: VACATION,
+        minutes: 60,
+        effectiveOn: "2026-02-31",
+        reason: "correction",
+      }),
+    ).toEqual({ ok: false, error: "effectiveOn must be YYYY-MM-DD" });
   });
 
   it("accepts signed hours at the boundary", () => {
@@ -240,6 +252,22 @@ describe("postAdjustment", () => {
       }),
     ]);
     expect(events[0]?.action).toBe("ledger.adjust");
+  });
+
+  it("404s a non-uuid employee id without posting", async () => {
+    const result = await postAdjustment({
+      actor: { id: "admin", role: "admin" },
+      orgId: "org-1",
+      employeeId: "not-a-uuid",
+      raw: { leaveTypeId: VACATION, minutes: 60, effectiveOn: "2026-03-01", reason: "fix" },
+      store: store({
+        postAdjustment: async () => {
+          throw new Error("must not post");
+        },
+      }),
+      writeAudit: async () => undefined,
+    });
+    expect(result).toEqual({ ok: false, status: 404, error: "employee not found" });
   });
 });
 

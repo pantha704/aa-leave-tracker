@@ -14,6 +14,7 @@ import {
 
 const PERSON = "44444444-4444-4444-8444-444444444444";
 const ADMIN = "55555555-5555-4555-8555-555555555555";
+const DAY = 480;
 
 function identity(overrides: Partial<EmployeeIdentity> = {}): EmployeeIdentity {
   return {
@@ -26,8 +27,8 @@ function identity(overrides: Partial<EmployeeIdentity> = {}): EmployeeIdentity {
     startDate: "2026-01-15",
     endDate: null,
     employmentType: "full_time",
-    workdayMinutes: 480,
-    orgWorkdayMinutes: 480,
+    workdayMinutes: DAY,
+    orgWorkdayMinutes: DAY,
     timezone: "UTC",
     active: true,
     ...overrides,
@@ -35,13 +36,17 @@ function identity(overrides: Partial<EmployeeIdentity> = {}): EmployeeIdentity {
 }
 
 function entry(overrides: Partial<TerminateStoreEntry> & { id: string }): TerminateStoreEntry {
+  const days = overrides.days ?? [{ onDate: "2026-07-06", slotActive: true, minutes: DAY }];
+  const startDate = overrides.startDate ?? days[0]?.onDate ?? "2026-07-06";
+  const endDate = overrides.endDate ?? days[days.length - 1]?.onDate ?? startDate;
   return {
     status: "pending",
-    startDate: "2026-07-06",
-    endDate: "2026-07-06",
+    startDate,
+    endDate,
+    totalMinutes: days.reduce((sum, day) => sum + day.minutes, 0),
     immutableAt: null,
-    days: [{ onDate: "2026-07-06", slotActive: true }],
     ...overrides,
+    days,
   };
 }
 
@@ -58,6 +63,15 @@ function memoryStore(
     entries: start.entries ?? [],
     reversed: [] as string[],
     cancelled: [] as string[],
+    usage: (start.entries ?? [])
+      .filter((row) => row.status === "approved")
+      .flatMap((row) =>
+        row.days.map((day) => ({
+          leaveEntryId: row.id,
+          effectiveOn: day.onDate,
+          reversed: false,
+        })),
+      ),
   };
   return {
     get employee() {
@@ -100,12 +114,22 @@ function memoryStore(
         day.onDate > endDate ? { ...day, slotActive: false } : day,
       );
     },
+    async trimEntryTo(input) {
+      const found = state.entries.find((row) => row.id === input.id);
+      if (!found) return;
+      found.endDate = input.endDate;
+      found.totalMinutes = input.totalMinutes;
+    },
     async reverseUsageAfter(input) {
-      const found = state.entries.find((row) => row.id === input.leaveEntryId);
-      if (!found) return 0;
-      const count = found.days.filter((day) => day.onDate > input.endDate).length;
-      state.reversed.push(input.leaveEntryId);
-      return count;
+      let n = 0;
+      for (const row of state.usage) {
+        if (row.leaveEntryId !== input.leaveEntryId || row.reversed) continue;
+        if (row.effectiveOn <= input.endDate) continue;
+        row.reversed = true;
+        n += 1;
+      }
+      if (n > 0) state.reversed.push(input.leaveEntryId);
+      return n;
     },
     async lockRemainingEntries(_employeeId, at) {
       let n = 0;
@@ -124,14 +148,16 @@ const csv =
   "email,leave_type,end_date,ledger_remaining,pro_rata_earned_to_end_date\nada@example.com,vacation,2026-06-30,24.00,12.00\n";
 
 function buildOk() {
-  return async () =>
-    ({
+  return async (input: { kind: string; employeeId?: string; endDate?: string }) => {
+    expect(input).toMatchObject({ kind: "termination", employeeId: PERSON, endDate: "2026-06-30" });
+    return {
       ok: true as const,
       csv,
       filename: "termination-2026-06-30.csv",
       rowCount: 1,
       kind: "termination" as const,
-    });
+    };
+  };
 }
 
 describe("parseTerminateInput", () => {
@@ -152,10 +178,14 @@ describe("parseTerminateInput", () => {
 });
 
 describe("shouldSkipGrantOrAccrual", () => {
-  it("skips inactive employees and posts after end_date", () => {
+  it("skips after end_date, not last-day grants for an inactive employee", () => {
     expect(shouldSkipGrantOrAccrual({ active: true, endDate: null }, "2026-07-01")).toBe(false);
+    expect(shouldSkipGrantOrAccrual({ active: false, endDate: null }, "2026-06-01")).toBe(true);
+    expect(shouldSkipGrantOrAccrual({ active: false, endDate: "2026-06-01" }, "2026-06-01")).toBe(
+      false,
+    );
     expect(shouldSkipGrantOrAccrual({ active: false, endDate: "2026-06-30" }, "2026-06-01")).toBe(
-      true,
+      false,
     );
     expect(shouldSkipGrantOrAccrual({ active: true, endDate: "2026-06-30" }, "2026-06-30")).toBe(
       false,
@@ -170,13 +200,31 @@ describe("terminateEmployee", () => {
   it("sets end_date and active=false, cancels future pending, reverses approved-future", async () => {
     const store = memoryStore({
       entries: [
-        entry({ id: "pend-future", status: "pending", startDate: "2026-07-06", endDate: "2026-07-06" }),
+        entry({ id: "pend-future", status: "pending" }),
+        entry({
+          id: "draft-future",
+          status: "draft",
+          startDate: "2026-07-10",
+          endDate: "2026-07-10",
+          days: [{ onDate: "2026-07-10", slotActive: true, minutes: DAY }],
+        }),
         entry({
           id: "pend-past",
           status: "pending",
           startDate: "2026-06-01",
           endDate: "2026-06-01",
-          days: [{ onDate: "2026-06-01", slotActive: true }],
+          days: [{ onDate: "2026-06-01", slotActive: true, minutes: DAY }],
+        }),
+        entry({
+          id: "pend-mixed",
+          status: "pending",
+          startDate: "2026-06-29",
+          endDate: "2026-07-01",
+          days: [
+            { onDate: "2026-06-29", slotActive: true, minutes: DAY },
+            { onDate: "2026-06-30", slotActive: true, minutes: DAY },
+            { onDate: "2026-07-01", slotActive: true, minutes: DAY },
+          ],
         }),
         entry({
           id: "appr-future",
@@ -184,9 +232,9 @@ describe("terminateEmployee", () => {
           startDate: "2026-07-06",
           endDate: "2026-07-08",
           days: [
-            { onDate: "2026-07-06", slotActive: true },
-            { onDate: "2026-07-07", slotActive: true },
-            { onDate: "2026-07-08", slotActive: true },
+            { onDate: "2026-07-06", slotActive: true, minutes: DAY },
+            { onDate: "2026-07-07", slotActive: true, minutes: DAY },
+            { onDate: "2026-07-08", slotActive: true, minutes: DAY },
           ],
         }),
         entry({
@@ -195,9 +243,9 @@ describe("terminateEmployee", () => {
           startDate: "2026-06-29",
           endDate: "2026-07-01",
           days: [
-            { onDate: "2026-06-29", slotActive: true },
-            { onDate: "2026-06-30", slotActive: true },
-            { onDate: "2026-07-01", slotActive: true },
+            { onDate: "2026-06-29", slotActive: true, minutes: DAY },
+            { onDate: "2026-06-30", slotActive: true, minutes: DAY },
+            { onDate: "2026-07-01", slotActive: true, minutes: DAY },
           ],
         }),
       ],
@@ -213,26 +261,39 @@ describe("terminateEmployee", () => {
         events.push(event);
       },
       buildExport: buildOk(),
+      now: new Date("2026-06-30T12:00:00Z"),
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(store.employee).toMatchObject({ active: false, endDate: "2026-06-30" });
-    expect(store.cancelled).toEqual(["pend-future", "appr-future"]);
+    expect(store.cancelled).toEqual(["pend-future", "draft-future", "appr-future"]);
     expect(store.reversed).toEqual(["appr-future", "appr-mixed"]);
-    expect(result.cancelledPending).toBe(1);
+    expect(result.cancelledEntries).toBe(3);
     expect(result.reversedUsage).toBe(4);
     expect(store.entries.find((row) => row.id === "pend-past")?.status).toBe("pending");
-    expect(store.entries.find((row) => row.id === "appr-mixed")?.status).toBe("approved");
-    expect(store.entries.find((row) => row.id === "appr-mixed")?.days).toEqual([
-      { onDate: "2026-06-29", slotActive: true },
-      { onDate: "2026-06-30", slotActive: true },
-      { onDate: "2026-07-01", slotActive: false },
+    const mixedPending = store.entries.find((row) => row.id === "pend-mixed");
+    expect(mixedPending).toMatchObject({
+      status: "pending",
+      endDate: "2026-06-30",
+      totalMinutes: DAY * 2,
+    });
+    const mixed = store.entries.find((row) => row.id === "appr-mixed");
+    expect(mixed).toMatchObject({
+      status: "approved",
+      endDate: "2026-06-30",
+      totalMinutes: DAY * 2,
+    });
+    expect(mixed?.days).toEqual([
+      { onDate: "2026-06-29", slotActive: true, minutes: DAY },
+      { onDate: "2026-06-30", slotActive: true, minutes: DAY },
+      { onDate: "2026-07-01", slotActive: false, minutes: DAY },
     ]);
     expect(store.entries.every((row) => row.immutableAt != null)).toBe(true);
     expect(result.downloadPath).toBe(terminationCsvDownloadPath(PERSON, "2026-06-30"));
     expect(result.csv.split("\n")[0]?.split(",")).toEqual([...TERMINATION_CSV_HEADERS]);
     expect(TERMINATION_HOUR_COLUMNS.every((col) => result.csv.includes(col))).toBe(true);
+    expect(result.exportError).toBeNull();
     expect(events).toEqual([
       expect.objectContaining({
         action: "employee.terminate",
@@ -243,8 +304,8 @@ describe("terminateEmployee", () => {
     ]);
   });
 
-  it("refuses a second terminate", async () => {
-    const store = memoryStore({ employee: identity({ active: false, endDate: "2026-05-01" }) });
+  it("re-exports when the employee is already inactive", async () => {
+    const store = memoryStore({ employee: identity({ active: false, endDate: "2026-06-30" }) });
     const result = await terminateEmployee({
       actor: { id: ADMIN, role: "admin" },
       orgId: "org-1",
@@ -254,7 +315,63 @@ describe("terminateEmployee", () => {
       writeAudit: async () => undefined,
       buildExport: buildOk(),
     });
-    expect(result).toEqual({ ok: false, status: 409, error: "employee is already inactive" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.alreadyInactive).toBe(true);
+    expect(result.csv).toContain("ledger_remaining");
+    expect(store.employee.endDate).toBe("2026-06-30");
+  });
+
+  it("returns 200 with downloadPath when export throws after commit", async () => {
+    const store = memoryStore();
+    const result = await terminateEmployee({
+      actor: { id: ADMIN, role: "admin" },
+      orgId: "org-1",
+      employeeId: PERSON,
+      raw: { endDate: "2026-06-30", reason: "left" },
+      store,
+      writeAudit: async () => undefined,
+      buildExport: async () => {
+        throw new Error("csv unavailable");
+      },
+      now: new Date("2026-06-30T12:00:00Z"),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(store.employee.active).toBe(false);
+    expect(result.csv).toBe("");
+    expect(result.exportError).toBe("csv unavailable");
+    expect(result.downloadPath).toBe(terminationCsvDownloadPath(PERSON, "2026-06-30"));
+  });
+
+  it("rejects endDate before startDate and after today", async () => {
+    const store = memoryStore();
+    const beforeStart = await terminateEmployee({
+      actor: { id: ADMIN, role: "admin" },
+      orgId: "org-1",
+      employeeId: PERSON,
+      raw: { endDate: "2026-01-01", reason: "early" },
+      store,
+      writeAudit: async () => undefined,
+      buildExport: buildOk(),
+      now: new Date("2026-06-30T12:00:00Z"),
+    });
+    expect(beforeStart).toEqual({
+      ok: false,
+      status: 400,
+      error: "endDate must be on or after startDate",
+    });
+
+    const future = await terminateEmployee({
+      actor: { id: ADMIN, role: "admin" },
+      orgId: "org-1",
+      employeeId: PERSON,
+      raw: { endDate: "2026-07-15", reason: "notice" },
+      store,
+      writeAudit: async () => undefined,
+      now: new Date("2026-06-30T12:00:00Z"),
+    });
+    expect(future).toEqual({ ok: false, status: 400, error: "endDate cannot be after today" });
   });
 
   it("forbids a non-admin", async () => {
@@ -269,6 +386,16 @@ describe("terminateEmployee", () => {
       },
     });
     expect(result).toEqual({ ok: false, status: 403, error: "forbidden" });
+  });
+
+  it("returns 401 when unauthenticated", async () => {
+    const result = await terminateEmployee({
+      actor: null,
+      orgId: "org-1",
+      employeeId: PERSON,
+      raw: { endDate: "2026-06-30", reason: "no" },
+    });
+    expect(result).toEqual({ ok: false, status: 401, error: "unauthenticated" });
   });
 });
 

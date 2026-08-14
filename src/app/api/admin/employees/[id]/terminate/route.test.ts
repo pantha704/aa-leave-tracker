@@ -27,15 +27,28 @@ describe("POST /api/admin/employees/:id/terminate", () => {
     expect(res.status).toBe(403);
   });
 
+  it("unauthenticated receives 401", async () => {
+    const res = await postAdminTerminate(req({ endDate: "2026-06-30", reason: "x" }), "emp-1", {
+      getAuthzActor: async () => null,
+      loadOrgId: async () => "org-1",
+      terminate: async () => {
+        throw new Error("must not terminate");
+      },
+    });
+    expect(res.status).toBe(401);
+  });
+
   it("admin terminates and receives the two-column CSV link", async () => {
     const payload: TerminateResult = {
       employee: { id: "emp-1", endDate: "2026-06-30", active: false },
-      cancelledPending: 1,
+      cancelledEntries: 1,
       reversedUsage: 2,
       lockedEntries: 3,
       filename: "termination-2026-06-30.csv",
       downloadPath: "/api/admin/export/termination.csv?employeeId=emp-1&endDate=2026-06-30",
       csv: "email,leave_type,end_date,ledger_remaining,pro_rata_earned_to_end_date\n",
+      exportError: null,
+      alreadyInactive: false,
     };
     const res = await postAdminTerminate(
       req({ endDate: "2026-06-30", reason: "last day" }),

@@ -54,12 +54,13 @@ export default async function AdminEmployeeFilePage({
         <section>
           <h2 className="text-lg font-medium">Terminate</h2>
           <p className="mt-1 text-xs text-zinc-500">
-            Sets end date, marks inactive, cancels future pending leave, reverses approved usage after
-            the end date, and stamps remaining entries immutable. Grant/accrual jobs must skip
-            inactive employees. CSV columns are ledger_remaining and pro_rata_earned_to_end_date.
+            Sets end date, marks inactive, cancels leave entirely after the end date, trims mixed
+            spans, reverses approved usage after the end date, and stamps remaining entries
+            immutable. Grant/accrual jobs skip effective_on after end_date. CSV columns are
+            ledger_remaining and pro_rata_earned_to_end_date.
           </p>
           <div className="mt-3">
-            <TerminateEmployeeForm employeeId={employee.id} />
+            <TerminateEmployeeForm employeeId={employee.id} employeeName={employee.name} />
           </div>
         </section>
       ) : null}

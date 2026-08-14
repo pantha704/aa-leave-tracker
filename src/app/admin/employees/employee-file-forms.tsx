@@ -181,12 +181,24 @@ export function DecideEntryForm({
 
 export function TerminateEmployeeForm({
   employeeId,
+  employeeName,
 }: {
   employeeId: string;
+  employeeName: string;
 }) {
   const [state, action, pending] = useActionState(terminateEmployeeAction, undefined);
   return (
-    <form action={action} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <form
+      action={action}
+      className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+      onSubmit={(event) => {
+        const endDate = String(new FormData(event.currentTarget).get("endDate") ?? "");
+        const confirmed = window.confirm(
+          `Terminate ${employeeName} on ${endDate}? This cannot be undone.`,
+        );
+        if (!confirmed) event.preventDefault();
+      }}
+    >
       <input type="hidden" name="employeeId" value={employeeId} />
       <label className="flex flex-col gap-1 text-xs">
         End date

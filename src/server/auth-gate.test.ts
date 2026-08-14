@@ -24,6 +24,7 @@ describe("auth gate", () => {
     };
     expect(applyAuthGate(get("/admin/holidays"), actor).status).toBe(403);
     expect(applyAuthGate(get("/admin/leave-types"), actor).status).toBe(403);
+    expect(applyAuthGate(get("/admin/import"), actor).status).toBe(403);
   });
 
   it("unauthenticated GET /me is redirected or 401", () => {

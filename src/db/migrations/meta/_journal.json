@@ -15,6 +15,13 @@
       "when": 1786723267502,
       "tag": "0001_dapper_chat",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786734222108,
+      "tag": "0002_keen_omega_sentinel",
+      "breakpoints": true
     }
   ]
 }

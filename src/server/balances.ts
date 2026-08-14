@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { ledgerEntries } from "@/db/schema";
+import { employeeInOrg, isUuid } from "@/server/admin/employees";
 import { tryWriteAudit, type AuditWriter } from "./audit";
 import { canAdmin, canReadEmployee, type AuthzActor } from "./authz";
 import { getDb } from "./db";
@@ -15,10 +16,13 @@ export type LedgerLine = {
 
 export type LoadLedger = (employeeId: string) => Promise<LedgerLine[]>;
 
+export type EmployeeInOrg = (orgId: string, employeeId: string) => Promise<boolean>;
+
 export type BalanceReadResult =
   | { status: 200; body: { employeeId: string; ledger: LedgerLine[] } }
   | { status: 401; body: { error: string } }
-  | { status: 403; body: { error: string } };
+  | { status: 403; body: { error: string } }
+  | { status: 404; body: { error: string } };
 
 export async function loadEmployeeLedger(employeeId: string): Promise<LedgerLine[]> {
   return getDb()
@@ -38,6 +42,8 @@ export async function readEmployeeBalances(input: {
   actor: AuthzActor | null;
   targetEmployeeId: string;
   requireAdmin?: boolean;
+  actorOrgId?: string | null;
+  employeeInOrg?: EmployeeInOrg;
   writeAudit: AuditWriter;
   loadLedger: LoadLedger;
 }): Promise<BalanceReadResult> {
@@ -67,6 +73,20 @@ export async function readEmployeeBalances(input: {
       after: { reason: "cross_employee" },
     });
     return { status: 403, body: { error: "forbidden" } };
+  }
+
+  if (requireAdmin) {
+    const orgId = input.actorOrgId;
+    if (!orgId) {
+      return { status: 403, body: { error: "forbidden" } };
+    }
+    if (!isUuid(targetEmployeeId)) {
+      return { status: 404, body: { error: "employee not found" } };
+    }
+    const inOrg = await (input.employeeInOrg ?? employeeInOrg)(orgId, targetEmployeeId);
+    if (!inOrg) {
+      return { status: 404, body: { error: "employee not found" } };
+    }
   }
 
   const ledger = await loadLedger(targetEmployeeId);

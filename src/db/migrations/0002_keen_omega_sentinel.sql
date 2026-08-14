@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "ledger_import_opening_once" ON "ledger_entries" USING btree ("employee_id","leave_type_id","period_year") WHERE "ledger_entries"."kind" = 'adjustment' AND "ledger_entries"."reversed_at" IS NULL AND "ledger_entries"."reason" LIKE 'import: opening remaining%';

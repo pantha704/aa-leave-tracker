@@ -113,6 +113,7 @@ describe("normative schema", () => {
 
     const ledgerIdx = getTableConfig(ledgerEntries).indexes.map((i) => i.config.name);
     expect(ledgerIdx).toContain("ledger_grant_once");
+    expect(ledgerIdx).toContain("ledger_import_opening_once");
     expect(ledgerIdx).toContain("ledger_balance_idx");
   });
 

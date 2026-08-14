@@ -15,6 +15,9 @@ export default async function AdminPage() {
         <a className="underline" href="/admin/policies">
           Policies
         </a>
+        <a className="underline" href="/admin/year-end">
+          Year-end
+        </a>
       </nav>
     </div>
   );

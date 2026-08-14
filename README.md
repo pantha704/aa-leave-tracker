@@ -48,6 +48,7 @@ docker run --name aa-leave-postgres \
 | `bun run db:generate` | Drizzle Kit generate |
 | `bun run db:migrate` | Apply Drizzle migrations |
 | `bun run db:seed` | Seed DEMO org (requires `SEED_TIMEZONE` and `SEED_ADMIN_PASSWORD`) |
+| `bun run job:accrual` | Monthly vacation accrual (no-op unless the period is `open`) |
 
 ## Auth
 
@@ -62,3 +63,9 @@ Email + password via Better Auth. There is no public registration endpoint.
 - In production set `BETTER_AUTH_URL` to an `https://` origin.
 
 Do not commit `.env`.
+
+## Year-end close (ops)
+
+Close the year from `/admin/year-end` **before the first January working day**. Close is an admin action (not an implicit 1 January cron). It freezes new usage dated in year Y, writes **carryover only** (capped by `carryover_max_minutes`; forfeit stays off unless the policy flag is on), grants the Sick 3-day allotment when Y+1 opens, and does **not** write a 17-day Vacation/Unpaid lump.
+
+Monthly accrual (`bun run job:accrual` / `bun src/jobs/accrual.ts`) is a no-op until that period is `open`. Reopen reverses close-created carryover and sick grants (`reversed_at`); it does not delete rows.

@@ -1,16 +1,16 @@
 import type { Evaluation, ExpandedDay, PeriodStatus } from "../types";
 
+const BLOCKED = new Set(["closed", "closing"]);
+
 export function closedPeriod(input: {
   days: readonly ExpandedDay[];
   periodStatuses: readonly PeriodStatus[];
 }): Extract<Evaluation, { ok: false }> | null {
-  const closedYears = new Set(
-    input.periodStatuses.filter((period) => period.status === "closed").map((period) => period.year),
-  );
-  if (closedYears.size === 0) return null;
+  const byYear = new Map(input.periodStatuses.map((period) => [period.year, period.status]));
   for (const day of input.days) {
     const year = Number(day.onDate.slice(0, 4));
-    if (closedYears.has(year)) {
+    const status = byYear.get(year);
+    if (status == null || BLOCKED.has(status)) {
       return {
         ok: false,
         code: "closed_period",

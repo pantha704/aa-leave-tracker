@@ -115,6 +115,12 @@ describe("overlap fixtures", () => {
       entry: dayEntry("am"),
       ok: false,
     },
+    {
+      name: "WFH full Mon + Vacation full Mon",
+      existing: existingDay("full", { consumesBalance: false }),
+      entry: dayEntry("full"),
+      ok: true,
+    },
   ] satisfies {
     name: string;
     existing: ExistingLeave;
@@ -140,6 +146,14 @@ describe("overlap fixtures", () => {
       entry: dayEntry("full"),
     });
     expect(result).toMatchObject({ ok: true });
+  });
+
+  it("treats a slot-active draft as occupying", () => {
+    const result = evaluate({
+      existing: [existingDay("full", { status: "draft" })],
+      entry: dayEntry("full"),
+    });
+    expect(result).toMatchObject({ ok: false, code: "overlap" });
   });
 });
 
@@ -182,6 +196,10 @@ describe("min_increment", () => {
     { name: "custom 180 % 60", portion: "custom" as const, customMinutes: 180, increment: 60, ok: true },
     { name: "custom 90 not multiple of 60", portion: "custom" as const, customMinutes: 90, increment: 60, ok: false },
     { name: "am 240 not multiple of 480", portion: "am" as const, customMinutes: null, increment: 480, ok: false },
+    { name: "custom above workday", portion: "custom" as const, customMinutes: 960, increment: 60, ok: false },
+    { name: "custom zero", portion: "custom" as const, customMinutes: 0, increment: 60, ok: false },
+    { name: "custom negative", portion: "custom" as const, customMinutes: -60, increment: 60, ok: false },
+    { name: "custom missing", portion: "custom" as const, customMinutes: null, increment: 60, ok: false },
   ])("$name", ({ portion, customMinutes, increment, ok }) => {
     const result = evaluate({
       entry: dayEntry(portion, { customMinutes }),
@@ -225,6 +243,14 @@ describe("negative_balance", () => {
       availableMinutes: 480,
       endDate: TUE,
       negativeAllowed: true,
+      negativeFloorMinutes: -240,
+      ok: false,
+    },
+    {
+      name: "does not honor a negative floor when negative is not allowed",
+      availableMinutes: 480,
+      endDate: TUE,
+      negativeAllowed: false,
       negativeFloorMinutes: -240,
       ok: false,
     },
@@ -298,6 +324,13 @@ describe("holidays_excluded", () => {
     });
     expect(result).toMatchObject({ ok: true, minutes: expectedMinutes });
   });
+
+  it("rejects a range with no working days", () => {
+    const result = evaluate({
+      entry: { startDate: "2026-07-11", endDate: "2026-07-12", portion: "full", consumesBalance: true },
+    });
+    expect(result).toMatchObject({ ok: false, code: "holidays_excluded" });
+  });
 });
 
 describe("waiting_period", () => {
@@ -364,6 +397,20 @@ describe("closed_period", () => {
         { year: 2025, status: "closed" },
         { year: 2026, status: "open" },
       ],
+      ok: false,
+    },
+    {
+      name: "rejects a day in a closing year",
+      startDate: MON,
+      endDate: MON,
+      periodStatuses: [{ year: 2026, status: "closing" }],
+      ok: false,
+    },
+    {
+      name: "rejects a day with no period row",
+      startDate: MON,
+      endDate: MON,
+      periodStatuses: [{ year: 2025, status: "open" }],
       ok: false,
     },
   ])("$name", ({ startDate, endDate, periodStatuses, ok }) => {
@@ -438,6 +485,30 @@ describe("approval and follow-on", () => {
       postsLedger: false,
       newStatus: "pending",
     });
+  });
+
+  it("does not auto-approve future leave when the caller sends intent log", () => {
+    const result = evaluate({
+      entry: dayEntry("full", { intent: "log" }),
+      today: TODAY,
+      policy: { ...openPolicy, approvalForLog: "none", approvalForRequest: "admin" },
+    });
+    expect(result).toEqual({
+      ok: true,
+      minutes: DEMO_WORKDAY_MINUTES,
+      postsLedger: false,
+      newStatus: "pending",
+    });
+  });
+
+  it("does not invent a DEMO workday when employee and policy omit it", () => {
+    expect(() =>
+      evaluate({
+        employee: { startDate: "2020-01-01" },
+        policy: { ...openPolicy, workdayMinutes: undefined },
+        entry: dayEntry("full"),
+      }),
+    ).toThrow(/workday minutes are required/);
   });
 
   it("ignores follow-on rule codes even when enabled", () => {

@@ -10,7 +10,9 @@ export function negativeBalance(input: {
 }): Extract<Evaluation, { ok: false }> | null {
   if (!input.consumesBalance || input.unlimited) return null;
   const projected = input.balance.availableMinutes - input.thisMinutes;
-  const floor = input.negativeAllowed ? input.negativeFloorMinutes : (input.negativeFloorMinutes ?? 0);
+  const floor = input.negativeAllowed
+    ? input.negativeFloorMinutes
+    : Math.max(0, input.negativeFloorMinutes ?? 0);
   if (floor == null) return null;
   if (projected < floor) {
     return {

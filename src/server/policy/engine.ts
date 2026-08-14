@@ -1,8 +1,7 @@
-import { DEMO_MIN_INCREMENT_MINUTES } from "@/db/demo-policy";
 import { requireIsoDate } from "@/server/ledger/balance";
 import { DEFAULT_WEEKEND_DAYS, expandProposedDays, resolveWorkdayMinutes } from "./days";
 import { closedPeriod } from "./rules/closed-period";
-import { minIncrement } from "./rules/min-increment";
+import { customPortion, minIncrement } from "./rules/min-increment";
 import { negativeBalance } from "./rules/negative-balance";
 import { overlap } from "./rules/overlap";
 import { spanCrossesToday } from "./rules/span-crosses-today";
@@ -25,15 +24,14 @@ export type {
 
 export { expandLeaveDays, expandProposedDays } from "./days";
 
-function inferIntent(endDate: string, today: string, explicit?: Intent): Intent {
-  if (explicit) return explicit;
+function intentFromDates(endDate: string, today: string): Intent {
   return endDate <= today ? "log" : "request";
 }
 
 function success(input: EvaluateLeaveInput, minutes: number): Extract<Evaluation, { ok: true }> {
   const today = requireIsoDate(input.today, "today");
   const endDate = requireIsoDate(input.entry.endDate, "endDate");
-  const intent = inferIntent(endDate, today, input.entry.intent);
+  const intent = intentFromDates(endDate, today);
   const approval =
     intent === "log"
       ? (input.policy.approvalForLog ?? "none")
@@ -63,6 +61,17 @@ export function evaluateLeave(input: EvaluateLeaveInput): Evaluation {
     employeeMinutes: input.employee.workdayMinutes,
     policyMinutes: input.policy.workdayMinutes,
   });
+  if (workdayMinutes == null) {
+    throw new Error("workday minutes are required");
+  }
+
+  const custom = customPortion({
+    portion: input.entry.portion,
+    customMinutes: input.entry.customMinutes,
+    workdayMinutes,
+    incrementMinutes: input.policy.minIncrementMinutes,
+  });
+  if (custom) return custom;
 
   const wait = waitingPeriod({
     startDate,
@@ -80,6 +89,13 @@ export function evaluateLeave(input: EvaluateLeaveInput): Evaluation {
     workdayMinutes,
   });
   const minutes = days.reduce((sum, day) => sum + day.minutes, 0);
+  if (days.length === 0) {
+    return {
+      ok: false,
+      code: "holidays_excluded",
+      message: "No working days in the requested range.",
+    };
+  }
 
   const closed = closedPeriod({ days, periodStatuses: input.periodStatuses });
   if (closed) return closed;
@@ -97,7 +113,7 @@ export function evaluateLeave(input: EvaluateLeaveInput): Evaluation {
 
   const increment = minIncrement({
     days,
-    incrementMinutes: input.policy.minIncrementMinutes ?? DEMO_MIN_INCREMENT_MINUTES,
+    incrementMinutes: input.policy.minIncrementMinutes,
   });
   if (increment) return increment;
 

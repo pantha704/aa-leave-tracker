@@ -1,4 +1,3 @@
-import { DEMO_WORKDAY_MINUTES } from "@/db/demo-policy";
 import { inclusiveIsoDates, requireIsoDate } from "@/server/ledger/balance";
 import type { ExpandedDay, HolidayDate, Portion, ProposedLeave } from "./types";
 
@@ -26,8 +25,10 @@ export function minutesForPortion(
 export function resolveWorkdayMinutes(input: {
   employeeMinutes?: number | null;
   policyMinutes?: number | null;
-}): number {
-  return input.employeeMinutes ?? input.policyMinutes ?? DEMO_WORKDAY_MINUTES;
+}): number | null {
+  const value = input.employeeMinutes ?? input.policyMinutes;
+  if (value == null || !Number.isInteger(value) || value <= 0) return null;
+  return value;
 }
 
 export function holidayDateSet(holidays: readonly HolidayDate[]): Set<string> {

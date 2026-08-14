@@ -82,7 +82,7 @@ function submit(
       portion: "full",
       ...extras,
     },
-    { store, writeAudit: async () => undefined, ...optionExtras },
+    { store, writeAudit: async () => undefined, notify: async () => undefined, ...optionExtras },
   );
 }
 
@@ -188,7 +188,11 @@ describe("submitLeave", () => {
       portion: "full" as const,
       today: "2099-01-01",
     };
-    const result = await submitLeave(sneaky, { store, writeAudit: async () => undefined });
+    const result = await submitLeave(sneaky, {
+      store,
+      writeAudit: async () => undefined,
+      notify: async () => undefined,
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.intent).toBe("request");

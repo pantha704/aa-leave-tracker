@@ -66,6 +66,6 @@ Email + password via Better Auth. There is no public registration endpoint.
 
 ## Email
 
-Leave pending mail is optional. Set `RESEND_API_KEY` or `SMTP_URL` (and `EMAIL_FROM`) to send one `leave.pending` email to active admin addresses. If neither key is set, `org_settings.email_enabled` stays false and every `/admin` page shows: **Email is off; check pending daily.** A send failure is logged and does not fail submit.
+Leave pending mail is optional. Set `RESEND_API_KEY` or `SMTP_URL` (and `EMAIL_FROM`) to send one `leave.pending` email to active admin addresses. Send and the admin banner both read those env vars; `org_settings.email_enabled` is a **mirror** of whether a key is set, not a separate kill switch. If neither key is set, the column stays false and every `/admin` page shows: **Email is off; check pending daily.** A send failure is logged (4s timeout) and does not fail or hang submit. SMTP AUTH runs only after STARTTLS or `smtps://`.
 
 Do not commit `.env`.

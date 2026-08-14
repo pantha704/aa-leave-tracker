@@ -71,7 +71,7 @@ function submitMonday(store: MemoryLeaveStore) {
       endDate: MON,
       portion: "full",
     },
-    { store, writeAudit: async () => undefined },
+    { store, writeAudit: async () => undefined, notify: async () => undefined },
   );
 }
 
@@ -189,7 +189,7 @@ describe("decideLeave", () => {
         endDate: "2026-07-08",
         portion: "full",
       },
-      { store, writeAudit: async () => undefined },
+      { store, writeAudit: async () => undefined, notify: async () => undefined },
     );
     expect(submitted.ok).toBe(true);
     if (!submitted.ok) return;

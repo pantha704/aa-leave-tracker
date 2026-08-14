@@ -1,10 +1,7 @@
 import { countPendingEntries } from "@/server/admin/employees";
 import { requireAdmin } from "@/server/auth";
-import {
-  EMAIL_OFF_BANNER,
-  shouldShowEmailBanner,
-  syncEmailEnabled,
-} from "@/server/notify";
+import { syncEmailEnabled } from "@/server/notify";
+import { AdminEmailBanner } from "./email-banner";
 
 export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
   const { employee } = await requireAdmin();
@@ -12,7 +9,6 @@ export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
   await syncEmailEnabled(employee.orgId).catch((err) => {
     console.error("org_settings.email_enabled sync failed", err);
   });
-  const showEmailBanner = shouldShowEmailBanner();
 
   return (
     <div className="flex min-h-full flex-1 flex-col">
@@ -39,14 +35,7 @@ export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
           </a>
         </nav>
       </header>
-      {showEmailBanner ? (
-        <div
-          className="border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
-          role="status"
-        >
-          <p className="mx-auto w-full max-w-5xl">{EMAIL_OFF_BANNER}</p>
-        </div>
-      ) : null}
+      <AdminEmailBanner />
       {children}
     </div>
   );

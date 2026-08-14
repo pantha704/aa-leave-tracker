@@ -6,6 +6,8 @@ import { getDb } from "@/server/db";
 import { renderLeavePendingHtml } from "@/server/templates/leave-pending.html";
 
 export const EMAIL_OFF_BANNER = "Email is off; check pending daily.";
+/** Bound so a hung Resend/SMTP call cannot 504 submit. */
+export const NOTIFY_TIMEOUT_MS = 4_000;
 
 export type EmailEnv = Record<string, string | undefined>;
 
@@ -36,6 +38,7 @@ export type NotifyOptions = {
   transport?: EmailTransport;
   from?: string;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 };
 
 export type NotifyResult = {
@@ -52,34 +55,25 @@ export type PendingLeaveEntryNotice = {
   endDate: string;
 };
 
-let lastSendFailed = false;
-
-export function resetNotifyState(): void {
-  lastSendFailed = false;
-}
-
-export function markSendFailed(): void {
-  lastSendFailed = true;
-}
-
-export function clearSendFailure(): void {
-  lastSendFailed = false;
-}
-
 export function isEmailConfigured(env: EmailEnv = process.env): boolean {
   return Boolean(env.RESEND_API_KEY?.trim() || env.SMTP_URL?.trim());
 }
 
+/** Banner is env-only. Send failures are logged; they do not flip this. */
 export function shouldShowEmailBanner(env: EmailEnv = process.env): boolean {
-  return !isEmailConfigured(env) || lastSendFailed;
+  return !isEmailConfigured(env);
+}
+
+export function sanitizeHeaderValue(value: string): string {
+  return value.replace(/[\r\n\0]+/g, " ").trim();
 }
 
 export function emailFromAddress(env: EmailEnv = process.env): string {
-  return (
+  return sanitizeHeaderValue(
     env.EMAIL_FROM?.trim() ||
-    env.RESEND_FROM?.trim() ||
-    env.MAIL_FROM?.trim() ||
-    "leave@localhost"
+      env.RESEND_FROM?.trim() ||
+      env.MAIL_FROM?.trim() ||
+      "leave@localhost",
   );
 }
 
@@ -88,12 +82,29 @@ export function leavePendingSubject(input: Pick<LeavePendingInput, "employeeName
     input.startDate === input.endDate
       ? input.startDate
       : `${input.startDate} – ${input.endDate}`;
-  return `Pending leave: ${input.employeeName} ${dates}`;
+  return sanitizeHeaderValue(`Pending leave: ${input.employeeName} ${dates}`);
+}
+
+export async function withNotifyTimeout<T>(
+  work: Promise<T>,
+  timeoutMs = NOTIFY_TIMEOUT_MS,
+  label = "leave.pending notify",
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export function createResendTransport(
   apiKey: string,
   fetchImpl: typeof fetch = fetch,
+  timeoutMs = NOTIFY_TIMEOUT_MS,
 ): EmailTransport {
   return {
     async send(message) {
@@ -109,6 +120,7 @@ export function createResendTransport(
           subject: message.subject,
           html: message.html,
         }),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");
@@ -118,10 +130,13 @@ export function createResendTransport(
   };
 }
 
-export function createSmtpTransport(smtpUrl: string): EmailTransport {
+export function createSmtpTransport(
+  smtpUrl: string,
+  timeoutMs = NOTIFY_TIMEOUT_MS,
+): EmailTransport {
   return {
     async send(message) {
-      await sendSmtp(smtpUrl, message);
+      await sendSmtp(smtpUrl, message, timeoutMs);
     },
   };
 }
@@ -129,11 +144,12 @@ export function createSmtpTransport(smtpUrl: string): EmailTransport {
 export function createEmailTransport(
   env: EmailEnv = process.env,
   fetchImpl: typeof fetch = fetch,
+  timeoutMs = NOTIFY_TIMEOUT_MS,
 ): EmailTransport | null {
   const resend = env.RESEND_API_KEY?.trim();
-  if (resend) return createResendTransport(resend, fetchImpl);
+  if (resend) return createResendTransport(resend, fetchImpl, timeoutMs);
   const smtp = env.SMTP_URL?.trim();
-  if (smtp) return createSmtpTransport(smtp);
+  if (smtp) return createSmtpTransport(smtp, timeoutMs);
   return null;
 }
 
@@ -151,38 +167,38 @@ export async function notifyLeavePending(
     return { ok: true, skipped: true, reason: "no_recipients" };
   }
 
-  const transport = options.transport ?? createEmailTransport(env, options.fetchImpl);
+  const timeoutMs = options.timeoutMs ?? NOTIFY_TIMEOUT_MS;
+  const transport =
+    options.transport ?? createEmailTransport(env, options.fetchImpl, timeoutMs);
   if (!transport) {
     return { ok: true, skipped: true, reason: "email_disabled" };
   }
 
   const message: EmailMessage = {
-    from: options.from ?? emailFromAddress(env),
-    to,
+    from: sanitizeHeaderValue(options.from ?? emailFromAddress(env)),
+    to: to.map(sanitizeHeaderValue),
     subject: leavePendingSubject(input),
     html: renderLeavePendingHtml(input),
   };
 
   try {
-    await transport.send(message);
-    clearSendFailure();
+    await withNotifyTimeout(transport.send(message), timeoutMs);
     return { ok: true, skipped: false };
   } catch (err) {
-    markSendFailed();
     console.error("leave.pending notify failed", err);
     return { ok: false, skipped: false, reason: "send_failed" };
   }
 }
 
-/** Never throw: submit must not become 500 because mail I/O failed. */
+/** Never throw and never wait past `timeoutMs`: submit must not hang or 500. */
 export async function tryNotifyLeavePending(
   notify: (input: PendingLeaveEntryNotice) => Promise<unknown>,
   input: PendingLeaveEntryNotice,
+  timeoutMs = NOTIFY_TIMEOUT_MS,
 ): Promise<void> {
   try {
-    await notify(input);
+    await withNotifyTimeout(Promise.resolve(notify(input)), timeoutMs);
   } catch (err) {
-    markSendFailed();
     console.error("leave.pending notify failed", err);
   }
 }
@@ -197,6 +213,7 @@ export async function listAdminEmails(orgId: string): Promise<string[]> {
   return rows.map((row) => row.email);
 }
 
+/** Mirror of env (`RESEND_API_KEY` / `SMTP_URL`). Not a separate kill switch; send and banner read env. */
 export async function syncEmailEnabled(
   orgId: string,
   env: EmailEnv = process.env,
@@ -267,10 +284,13 @@ export async function notifyPendingLeaveEntry(
       options,
     );
   } catch (err) {
-    markSendFailed();
     console.error("leave.pending notify failed", err);
     return { ok: false, skipped: false, reason: "send_failed" };
   }
+}
+
+export function smtpAuthAllowed(tlsActive: boolean, user: string): boolean {
+  return !user || tlsActive;
 }
 
 type SmtpConn = {
@@ -290,25 +310,38 @@ function encodeDotStuff(body: string): string {
   return body.replace(/\r?\n/g, "\r\n").replace(/^\./gm, "..");
 }
 
-async function openSmtp(host: string, port: number, implicitTls: boolean): Promise<SmtpConn> {
+function attachSocketTimeout(socket: Socket | TLSSocket, timeoutMs: number): void {
+  socket.setTimeout(timeoutMs);
+}
+
+async function openSmtp(
+  host: string,
+  port: number,
+  implicitTls: boolean,
+  timeoutMs: number,
+): Promise<SmtpConn> {
   let socket: Socket | TLSSocket = implicitTls
     ? tlsConnect({ host, port, servername: host })
     : netConnect({ host, port });
+  attachSocketTimeout(socket, timeoutMs);
 
   await new Promise<void>((resolve, reject) => {
     const onError = (err: Error) => reject(err);
+    const onTimeout = () => reject(new Error("SMTP connect timed out"));
     socket.once("error", onError);
+    socket.once("timeout", onTimeout);
     socket.once(implicitTls ? "secureConnect" : "connect", () => {
       socket.off("error", onError);
+      socket.off("timeout", onTimeout);
       resolve();
     });
   });
 
   let buffer = "";
-  const waiters: Array<(chunk: string) => void> = [];
+  const waiters: Array<() => void> = [];
   const onData = (chunk: Buffer | string) => {
     buffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
-    if (waiters.length > 0) waiters.shift()?.("");
+    waiters.shift()?.();
   };
   socket.on("data", onData);
 
@@ -334,14 +367,33 @@ async function openSmtp(host: string, port: number, implicitTls: boolean): Promi
     for (;;) {
       const ready = takeReply();
       if (ready) return ready;
-      await new Promise<void>((resolve, reject) => {
-        const onError = (err: Error) => reject(err);
-        socket.once("error", onError);
-        waiters.push(() => {
-          socket.off("error", onError);
-          resolve();
-        });
-      });
+      const raced = await new Promise<{ code: number; lines: string[] } | null>(
+        (resolve, reject) => {
+          const onError = (err: Error) => {
+            socket.off("timeout", onTimeout);
+            reject(err);
+          };
+          const onTimeout = () => {
+            socket.off("error", onError);
+            reject(new Error("SMTP read timed out"));
+          };
+          socket.once("error", onError);
+          socket.once("timeout", onTimeout);
+          waiters.push(() => {
+            socket.off("error", onError);
+            socket.off("timeout", onTimeout);
+            resolve(null);
+          });
+          const again = takeReply();
+          if (again) {
+            waiters.pop();
+            socket.off("error", onError);
+            socket.off("timeout", onTimeout);
+            resolve(again);
+          }
+        },
+      );
+      if (raced) return raced;
     }
   };
 
@@ -367,6 +419,7 @@ async function openSmtp(host: string, port: number, implicitTls: boolean): Promi
     });
     socket.removeListener("data", onData);
     socket = next;
+    attachSocketTimeout(socket, timeoutMs);
     buffer = "";
     socket.on("data", onData);
   };
@@ -381,7 +434,24 @@ async function openSmtp(host: string, port: number, implicitTls: boolean): Promi
   };
 }
 
-async function sendSmtp(smtpUrl: string, message: EmailMessage): Promise<void> {
+function smtpDataHeaders(message: EmailMessage): string {
+  const from = sanitizeHeaderValue(message.from);
+  const to = message.to.map(sanitizeHeaderValue).join(", ");
+  const subject = sanitizeHeaderValue(message.subject);
+  return [
+    `From: ${from}`,
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/html; charset=utf-8",
+  ].join("\r\n");
+}
+
+async function sendSmtp(
+  smtpUrl: string,
+  message: EmailMessage,
+  timeoutMs = NOTIFY_TIMEOUT_MS,
+): Promise<void> {
   const url = new URL(smtpUrl);
   const implicitTls = url.protocol === "smtps:";
   const host = url.hostname;
@@ -389,21 +459,26 @@ async function sendSmtp(smtpUrl: string, message: EmailMessage): Promise<void> {
   const user = url.username ? decodeURIComponent(url.username) : "";
   const pass = url.password ? decodeURIComponent(url.password) : "";
 
-  const conn = await openSmtp(host, port, implicitTls);
+  const conn = await openSmtp(host, port, implicitTls, timeoutMs);
   try {
     expectSmtp(await conn.readReply(), 220);
     await conn.write(`EHLO ${host}`);
     const ehlo = await conn.readReply();
     expectSmtp(ehlo, 250);
     const offersStartTls = ehlo.lines.some((line) => /STARTTLS/i.test(line));
+    let tlsActive = implicitTls;
     if (!implicitTls && offersStartTls) {
       await conn.write("STARTTLS");
       expectSmtp(await conn.readReply(), 220);
       await conn.upgradeTls();
+      tlsActive = true;
       await conn.write(`EHLO ${host}`);
       expectSmtp(await conn.readReply(), 250);
     }
     if (user) {
+      if (!smtpAuthAllowed(tlsActive, user)) {
+        throw new Error("SMTP AUTH requires STARTTLS or smtps://");
+      }
       await conn.write("AUTH LOGIN");
       expectSmtp(await conn.readReply(), 334);
       await conn.write(Buffer.from(user).toString("base64"));
@@ -411,22 +486,15 @@ async function sendSmtp(smtpUrl: string, message: EmailMessage): Promise<void> {
       await conn.write(Buffer.from(pass).toString("base64"));
       expectSmtp(await conn.readReply(), 235, 250);
     }
-    await conn.write(`MAIL FROM:<${message.from}>`);
+    await conn.write(`MAIL FROM:<${sanitizeHeaderValue(message.from)}>`);
     expectSmtp(await conn.readReply(), 250);
     for (const rcpt of message.to) {
-      await conn.write(`RCPT TO:<${rcpt}>`);
+      await conn.write(`RCPT TO:<${sanitizeHeaderValue(rcpt)}>`);
       expectSmtp(await conn.readReply(), 250, 251);
     }
     await conn.write("DATA");
     expectSmtp(await conn.readReply(), 354);
-    const headers = [
-      `From: ${message.from}`,
-      `To: ${message.to.join(", ")}`,
-      `Subject: ${message.subject}`,
-      "MIME-Version: 1.0",
-      "Content-Type: text/html; charset=utf-8",
-    ].join("\r\n");
-    await conn.write(`${headers}\r\n\r\n${encodeDotStuff(message.html)}\r\n.`);
+    await conn.write(`${smtpDataHeaders(message)}\r\n\r\n${encodeDotStuff(message.html)}\r\n.`);
     expectSmtp(await conn.readReply(), 250);
     await conn.write("QUIT");
     await conn.readReply().catch(() => undefined);

@@ -5,12 +5,13 @@ import {
   type AuthzActor,
   type PeriodGate,
 } from "@/server/authz";
-import { evaluateLeave } from "@/server/policy/engine";
 import type { LeaveStatus } from "@/server/policy/types";
 import {
+  assertYearlyLimits,
   dbLeaveStore,
+  evaluateFrozenDays,
+  isOccupancyConflict,
   postUsageForDays,
-  toApiCode,
   type LeaveDayRecord,
   type LeaveEntryRecord,
   type LeaveFail,
@@ -25,7 +26,6 @@ export type DecideLeaveInput = {
   entryId: string;
   action: DecideAction;
   adminNote?: string | null;
-  today?: string;
   override?: boolean;
 };
 
@@ -33,6 +33,8 @@ export type DecideLeaveOptions = {
   store?: LeaveStore;
   writeAudit?: AuditWriter;
   now?: Date;
+  /** Test clock only. Production derives org-local today from `now`. */
+  today?: string;
 };
 
 export type DecideLeaveSuccess = SubmitLeaveSuccess & { action: DecideAction };
@@ -75,6 +77,11 @@ function periodGateFor(
   return { open, today };
 }
 
+function adminNoteFor(actor: AuthzActor, note: string | null | undefined): string | null | undefined {
+  if (!canAdmin(actor)) return undefined;
+  return note;
+}
+
 export async function decideLeave(
   input: DecideLeaveInput,
   options: DecideLeaveOptions = {},
@@ -87,151 +94,165 @@ export async function decideLeave(
   const found = await store.getEntry(input.entryId);
   if (!found) return fail(404, "NOT_FOUND", "leave entry not found");
 
-  return store.withEmployeeLock(found.entry.employeeId, async () => {
-    const current = await store.getEntry(input.entryId);
-    if (!current) return fail(404, "NOT_FOUND", "leave entry not found");
+  try {
+    return await store.withEmployeeLock(found.entry.employeeId, async () => {
+      const current = await store.getEntry(input.entryId);
+      if (!current) return fail(404, "NOT_FOUND", "leave entry not found");
 
-    const { entry, days } = current;
-    const target = nextStatus(entry.status, input.action);
-    if (!target) {
-      return fail(409, "INVALID_TRANSITION", `cannot ${input.action} a ${entry.status} entry`);
-    }
+      const { entry, days } = current;
+      const target = nextStatus(entry.status, input.action);
+      if (!target) {
+        return fail(409, "INVALID_TRANSITION", `cannot ${input.action} a ${entry.status} entry`);
+      }
 
-    const snap = await store.loadSubmitSnapshot({
-      employeeId: entry.employeeId,
-      leaveTypeId: entry.leaveTypeId,
-      today: input.today,
-    });
-    if (!snap) return fail(404, "NOT_FOUND", "employee or leave type not found");
-    const today = input.today ?? snap.today;
-    const period = periodGateFor(entry, days, snap.periodStatuses, today);
-
-    if (input.action === "approve" || input.action === "reject") {
-      if (!canAdmin(actor)) return fail(403, "FORBIDDEN", "forbidden");
-    } else if (
-      !canCancelEntry(
-        actor,
-        {
-          employeeId: entry.employeeId,
-          status: entry.status,
-          immutableAt: entry.immutableAt,
-          startDate: entry.startDate,
-          managerId: entry.managerId ?? snap.employee.managerId,
-        },
-        period,
-      )
-    ) {
-      return fail(403, "FORBIDDEN", "forbidden");
-    }
-
-    if (input.action === "approve") {
-      // This pending entry is already in requestedMinutes; do not count it twice.
-      const alreadyRequested = entry.status === "pending" ? entry.totalMinutes : 0;
-      const evaluation = evaluateLeave({
-        employee: {
-          startDate: snap.employee.startDate,
-          workdayMinutes: snap.employee.workdayMinutes,
-          role: snap.employee.role,
-        },
-        entry: {
-          id: entry.id,
-          startDate: entry.startDate,
-          endDate: entry.endDate,
-          portion: entry.portion,
-          customMinutes: entry.customMinutes,
-          intent: entry.intent,
-          consumesBalance: snap.leaveType.consumesBalance,
-          unlimited: snap.leaveType.unlimited,
-        },
-        policy: {
-          ...snap.policy,
-          consumesBalance: snap.leaveType.consumesBalance,
-          unlimited: snap.leaveType.unlimited,
-          weekendDays: snap.employee.weekendDays,
-          workdayMinutes: snap.employee.orgWorkdayMinutes,
-        },
-        balance: {
-          ...snap.balance,
-          requestedMinutes: Math.max(0, snap.balance.requestedMinutes - alreadyRequested),
-          availableMinutes: snap.balance.availableMinutes + alreadyRequested,
-        },
-        holidays: snap.holidays,
-        existing: snap.existing,
-        today,
-        periodStatuses: snap.periodStatuses,
-        override: canAdmin(actor) && input.override === true,
+      const loaded = await store.loadSubmitSnapshot({
+        employeeId: entry.employeeId,
+        leaveTypeId: entry.leaveTypeId,
+        today: options.today,
       });
-      if (!evaluation.ok) {
-        return fail(422, toApiCode(evaluation.code), evaluation.message);
+      if (!loaded.ok && loaded.reason === "no_policy") {
+        return fail(422, "NO_POLICY", "No policy assignment for this employee and leave type.");
+      }
+      if (!loaded.ok) return fail(404, "NOT_FOUND", "employee or leave type not found");
+      const snap = loaded.snapshot;
+      const today = options.today ?? snap.today;
+      const period = periodGateFor(entry, days, snap.periodStatuses, today);
+      const adminNote = adminNoteFor(actor, input.adminNote);
+
+      if (input.action === "approve" || input.action === "reject") {
+        if (!canAdmin(actor)) return fail(403, "FORBIDDEN", "forbidden");
+      } else if (
+        !canCancelEntry(
+          actor,
+          {
+            employeeId: entry.employeeId,
+            status: entry.status,
+            immutableAt: entry.immutableAt,
+            startDate: entry.startDate,
+            managerId: entry.managerId ?? snap.employee.managerId,
+          },
+          period,
+        )
+      ) {
+        return fail(403, "FORBIDDEN", "forbidden");
+      }
+
+      if (snap.orgSettings.appReadonly && input.action !== "cancel") {
+        return fail(403, "APP_READONLY", "The application is in read-only mode.");
+      }
+
+      if (input.action === "approve") {
+        const frozen = evaluateFrozenDays({
+          entry,
+          days,
+          snap,
+          override: canAdmin(actor) && input.override === true,
+        });
+        if (frozen) return frozen;
+
+        const yearly = await assertYearlyLimits({
+          store,
+          employeeId: entry.employeeId,
+          leaveTypeId: entry.leaveTypeId,
+          days: days.filter((day) => day.slotActive),
+          policy: {
+            ...snap.policy,
+            consumesBalance: snap.leaveType.consumesBalance,
+            unlimited: snap.leaveType.unlimited,
+            weekendDays: snap.employee.weekendDays,
+            workdayMinutes: snap.employee.orgWorkdayMinutes,
+          },
+          consumesBalance: snap.leaveType.consumesBalance,
+          unlimited: snap.leaveType.unlimited,
+          excludePendingDays: entry.status === "pending" ? days : undefined,
+        });
+        if (yearly) return yearly;
+
+        await store.updateEntry(entry.id, {
+          status: "approved",
+          updatedBy: actor.id,
+          updatedAt: now,
+          adminNote,
+        });
+        await postUsageForDays(store, {
+          employeeId: entry.employeeId,
+          leaveTypeId: entry.leaveTypeId,
+          days,
+          createdBy: actor.id,
+          createdAt: now,
+        });
+
+        const approved = {
+          ...entry,
+          status: "approved" as const,
+          updatedBy: actor.id,
+          updatedAt: now,
+          adminNote: adminNote !== undefined ? adminNote : entry.adminNote,
+        };
+        await tryWriteAudit(options.writeAudit ?? writeAuditEvent, {
+          actorId: actor.id,
+          action: "leave.approve",
+          entityType: "leave_entry",
+          entityId: entry.id,
+          before: { status: entry.status },
+          after: { status: "approved" },
+        });
+        return {
+          ok: true,
+          status: 200,
+          action: "approve",
+          entry: approved,
+          days,
+          intent: entry.intent,
+          ledgerPosted: days.some((day) => day.slotActive && day.consumesBalance),
+        };
       }
 
       await store.updateEntry(entry.id, {
-        status: "approved",
+        status: target,
         updatedBy: actor.id,
         updatedAt: now,
-        adminNote: input.adminNote,
+        adminNote,
       });
-      await postUsageForDays(store, {
-        employeeId: entry.employeeId,
-        leaveTypeId: entry.leaveTypeId,
-        days,
-        createdBy: actor.id,
-        createdAt: now,
-      });
+      await store.deactivateDays(entry.id);
+      if (entry.status === "approved") {
+        await store.reverseUsageForEntry({
+          leaveEntryId: entry.id,
+          createdBy: actor.id,
+          reason: `leave.${input.action}`,
+          createdAt: now,
+        });
+      }
 
-      const approved = { ...entry, status: "approved" as const, updatedBy: actor.id, updatedAt: now };
       await tryWriteAudit(options.writeAudit ?? writeAuditEvent, {
         actorId: actor.id,
-        action: "leave.approve",
+        action: `leave.${input.action}`,
         entityType: "leave_entry",
         entityId: entry.id,
         before: { status: entry.status },
-        after: { status: "approved" },
+        after: { status: target, slotActive: false },
       });
+
       return {
         ok: true,
         status: 200,
-        action: "approve",
-        entry: approved,
-        days,
+        action: input.action,
+        entry: {
+          ...entry,
+          status: target,
+          updatedBy: actor.id,
+          updatedAt: now,
+          adminNote: adminNote !== undefined ? adminNote : entry.adminNote,
+        },
+        days: days.map((day) => ({ ...day, slotActive: false })),
         intent: entry.intent,
-        ledgerPosted: days.some((day) => day.slotActive && day.consumesBalance),
+        ledgerPosted: false,
       };
-    }
-
-    await store.updateEntry(entry.id, {
-      status: target,
-      updatedBy: actor.id,
-      updatedAt: now,
-      adminNote: input.adminNote,
     });
-    await store.deactivateDays(entry.id);
-    if (entry.status === "approved") {
-      await store.reverseUsageForEntry({
-        leaveEntryId: entry.id,
-        createdBy: actor.id,
-        reason: `leave.${input.action}`,
-        createdAt: now,
-      });
+  } catch (err) {
+    if (isOccupancyConflict(err)) {
+      return fail(409, "OVERLAP", "A consuming leave day already occupies that date and portion.");
     }
-
-    await tryWriteAudit(options.writeAudit ?? writeAuditEvent, {
-      actorId: actor.id,
-      action: `leave.${input.action}`,
-      entityType: "leave_entry",
-      entityId: entry.id,
-      before: { status: entry.status },
-      after: { status: target, slotActive: false },
-    });
-
-    return {
-      ok: true,
-      status: 200,
-      action: input.action,
-      entry: { ...entry, status: target, updatedBy: actor.id, updatedAt: now },
-      days: days.map((day) => ({ ...day, slotActive: false })),
-      intent: entry.intent,
-      ledgerPosted: false,
-    };
-  });
+    throw err;
+  }
 }

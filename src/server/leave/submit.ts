@@ -8,6 +8,7 @@ import {
   leaveTypes,
   ledgerEntries,
   organizations,
+  orgSettings,
   policies,
   policyAssignments,
   policyPeriods,
@@ -16,11 +17,20 @@ import { tryWriteAudit, writeAuditEvent, type AuditWriter } from "@/server/audit
 import { canAdmin, canReadEmployee, type AuthzActor } from "@/server/authz";
 import {
   asOfDateString,
+  calendarYearBounds,
   getBalance,
+  pendingMinutesInPeriod,
   requireIsoDate,
   type LedgerDb,
   type LedgerKind,
 } from "@/server/ledger/balance";
+import { isUniqueViolation } from "@/server/pg-error";
+import { closedPeriod } from "@/server/policy/rules/closed-period";
+import { minIncrement } from "@/server/policy/rules/min-increment";
+import { negativeBalance } from "@/server/policy/rules/negative-balance";
+import { overlap } from "@/server/policy/rules/overlap";
+import { takeCeiling } from "@/server/policy/rules/take-ceiling";
+import { waitingPeriod } from "@/server/policy/rules/waiting-period";
 import {
   postLedgerEntryInTx,
   prepareReversal,
@@ -109,7 +119,18 @@ export type SubmitSnapshot = {
   periodStatuses: PeriodStatus[];
   today: string;
   balance: PolicyBalance;
+  orgSettings: OrgLeaveSettings;
 };
+
+export type OrgLeaveSettings = {
+  appReadonly: boolean;
+  selfLogEnabled: boolean;
+  requestsEnabled: boolean;
+};
+
+export type LoadSnapshotResult =
+  | { ok: true; snapshot: SubmitSnapshot }
+  | { ok: false; reason: "not_found" | "no_policy" };
 
 export type LeaveStore = {
   withEmployeeLock: <T>(employeeId: string, fn: () => Promise<T>) => Promise<T>;
@@ -117,7 +138,13 @@ export type LeaveStore = {
     employeeId: string;
     leaveTypeId: string;
     today?: string;
-  }) => Promise<SubmitSnapshot | null>;
+  }) => Promise<LoadSnapshotResult>;
+  getBalanceAsOf: (input: {
+    employeeId: string;
+    leaveTypeId: string;
+    asOf: string;
+    timeZone?: string;
+  }) => Promise<PolicyBalance>;
   insertEntry: (entry: LeaveEntryRecord, days: LeaveDayRecord[]) => Promise<void>;
   getEntry: (id: string) => Promise<{ entry: LeaveEntryRecord; days: LeaveDayRecord[] } | null>;
   updateEntry: (
@@ -155,7 +182,6 @@ export type SubmitLeaveInput = {
   customMinutes?: number | null;
   customHours?: string | number | null;
   note?: string | null;
-  today?: string;
   override?: boolean;
 };
 
@@ -172,6 +198,8 @@ export type SubmitLeaveOptions = {
   store?: LeaveStore;
   writeAudit?: AuditWriter;
   now?: Date;
+  /** Test clock only. Production derives org-local today from `now`. */
+  today?: string;
 };
 
 function fail(status: LeaveFailStatus, code: string, message: string): LeaveFail {
@@ -263,6 +291,140 @@ export function todayInTimeZone(timeZone: string, now = new Date()): string {
   return asOfDateString(now, timeZone);
 }
 
+export function isOccupancyConflict(err: unknown): boolean {
+  if (isUniqueViolation(err)) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /overlap|unique|already exists/i.test(message);
+}
+
+export function yearsFromDays(days: readonly { onDate: string }[]): number[] {
+  return [...new Set(days.map((day) => Number(day.onDate.slice(0, 4))))].sort();
+}
+
+function yearEnd(year: number): string {
+  return calendarYearBounds(year).yearEnd;
+}
+
+function requestedInYear(
+  days: readonly { onDate: string; minutes: number }[],
+  year: number,
+): number {
+  return pendingMinutesInPeriod(
+    {
+      status: "pending",
+      totalMinutes: days.reduce((sum, day) => sum + day.minutes, 0),
+      startDate: days[0]?.onDate ?? `${year}-01-01`,
+      endDate: days[days.length - 1]?.onDate ?? `${year}-12-31`,
+      days: days.map((day) => ({ onDate: day.onDate, minutes: day.minutes })),
+    },
+    year,
+  );
+}
+
+export async function assertYearlyLimits(input: {
+  store: LeaveStore;
+  employeeId: string;
+  leaveTypeId: string;
+  days: readonly { onDate: string; minutes: number }[];
+  policy: PolicySnapshot;
+  consumesBalance: boolean;
+  unlimited: boolean;
+  excludePendingDays?: readonly { onDate: string; minutes: number }[];
+}): Promise<LeaveFail | null> {
+  const years = yearsFromDays(input.days);
+  for (const year of years) {
+    const balance = await input.store.getBalanceAsOf({
+      employeeId: input.employeeId,
+      leaveTypeId: input.leaveTypeId,
+      asOf: yearEnd(year),
+    });
+    const exclude = input.excludePendingDays
+      ? requestedInYear(input.excludePendingDays, year)
+      : 0;
+    const adjusted = {
+      ...balance,
+      requestedMinutes: Math.max(0, balance.requestedMinutes - exclude),
+      availableMinutes: balance.availableMinutes + exclude,
+    };
+    const thisMinutes = requestedInYear(input.days, year);
+    const ceiling = takeCeiling({
+      balance: adjusted,
+      thisMinutes,
+      takeCeilingMinutes: input.policy.takeCeilingMinutes,
+      consumesBalance: input.consumesBalance,
+      unlimited: input.unlimited,
+    });
+    if (ceiling) return fail(422, toApiCode(ceiling.code), ceiling.message);
+    const negative = negativeBalance({
+      balance: adjusted,
+      thisMinutes,
+      negativeAllowed: input.policy.negativeAllowed ?? false,
+      negativeFloorMinutes: input.policy.negativeFloorMinutes,
+      consumesBalance: input.consumesBalance,
+      unlimited: input.unlimited,
+    });
+    if (negative) return fail(422, toApiCode(negative.code), negative.message);
+  }
+  return null;
+}
+
+/** Overlap / closed / increment / wait against the persisted day rows — no re-expand. */
+export function evaluateFrozenDays(input: {
+  entry: LeaveEntryRecord;
+  days: readonly LeaveDayRecord[];
+  snap: SubmitSnapshot;
+  override?: boolean;
+}): LeaveFail | null {
+  const workdayMinutes =
+    input.snap.employee.workdayMinutes ?? input.snap.employee.orgWorkdayMinutes;
+  const wait = waitingPeriod({
+    startDate: input.entry.startDate,
+    hireDate: input.snap.employee.startDate,
+    waitingPeriodDays: input.snap.policy.waitingPeriodDays ?? 0,
+    consumesBalance: input.snap.leaveType.consumesBalance,
+    override: input.override === true,
+  });
+  if (wait) return fail(422, toApiCode(wait.code), wait.message);
+  const active = input.days.filter((day) => day.slotActive);
+  if (active.length === 0) {
+    return fail(422, "HOLIDAYS_EXCLUDED", "No working days in the requested range.");
+  }
+  const closed = closedPeriod({ days: active, periodStatuses: input.snap.periodStatuses });
+  if (closed) return fail(422, toApiCode(closed.code), closed.message);
+  const clash = overlap({
+    days: active,
+    consumesBalance: input.snap.leaveType.consumesBalance,
+    existing: input.snap.existing,
+    entryId: input.entry.id,
+    holidays: input.snap.holidays,
+    weekendDays: input.snap.employee.weekendDays,
+    workdayMinutes,
+  });
+  if (clash) return fail(422, toApiCode(clash.code), clash.message);
+  const increment = minIncrement({
+    days: active,
+    incrementMinutes: input.snap.policy.minIncrementMinutes,
+  });
+  if (increment) return fail(422, toApiCode(increment.code), increment.message);
+  return null;
+}
+
+export function gateOrgWrites(
+  settings: OrgLeaveSettings,
+  intent: Intent,
+): LeaveFail | null {
+  if (settings.appReadonly) {
+    return fail(403, "APP_READONLY", "The application is in read-only mode.");
+  }
+  if (intent === "log" && !settings.selfLogEnabled) {
+    return fail(422, "SELF_LOG_DISABLED", "Self-logging is disabled.");
+  }
+  if (intent === "request" && !settings.requestsEnabled) {
+    return fail(422, "REQUESTS_DISABLED", "Leave requests are disabled.");
+  }
+  return null;
+}
+
 function canSubmitFor(actor: AuthzActor, employeeId: string, managerId?: string | null): boolean {
   if (!canReadEmployee(actor, employeeId, { managerId })) return false;
   return canAdmin(actor) || actor.id === employeeId;
@@ -315,17 +477,21 @@ export async function submitLeave(
 
   try {
     return await store.withEmployeeLock(input.employeeId, async () => {
-      const snap = await store.loadSubmitSnapshot({
+      const loaded = await store.loadSubmitSnapshot({
         employeeId: input.employeeId,
         leaveTypeId: input.leaveTypeId,
-        today: input.today,
+        today: options.today,
       });
-      if (!snap) return fail(404, "NOT_FOUND", "employee or leave type not found");
+      if (!loaded.ok && loaded.reason === "no_policy") {
+        return fail(422, "NO_POLICY", "No policy assignment for this employee and leave type.");
+      }
+      if (!loaded.ok) return fail(404, "NOT_FOUND", "employee or leave type not found");
+      const snap = loaded.snapshot;
       if (!canSubmitFor(actor, input.employeeId, snap.employee.managerId)) {
         return fail(403, "FORBIDDEN", "forbidden");
       }
 
-      const today = input.today ?? snap.today;
+      const today = options.today ?? snap.today;
       let intent: Intent;
       try {
         const resolved = intentFromDates(input.startDate, input.endDate, today);
@@ -342,6 +508,9 @@ export async function submitLeave(
         customHours: input.customHours,
       });
       if (!custom.ok) return custom;
+
+      const gated = gateOrgWrites(snap.orgSettings, intent);
+      if (gated) return gated;
 
       const policy = policyFromSnapshot(snap);
       let evaluation: ReturnType<typeof evaluateLeave>;
@@ -361,7 +530,12 @@ export async function submitLeave(
             consumesBalance: snap.leaveType.consumesBalance,
             unlimited: snap.leaveType.unlimited,
           },
-          policy,
+          policy: {
+            ...policy,
+            takeCeilingMinutes: null,
+            negativeAllowed: true,
+            negativeFloorMinutes: null,
+          },
           balance: snap.balance,
           holidays: snap.holidays,
           existing: snap.existing,
@@ -421,6 +595,17 @@ export async function submitLeave(
         slotActive: day.slotActive,
       }));
 
+      const yearly = await assertYearlyLimits({
+        store,
+        employeeId: input.employeeId,
+        leaveTypeId: input.leaveTypeId,
+        days,
+        policy,
+        consumesBalance: snap.leaveType.consumesBalance,
+        unlimited: snap.leaveType.unlimited,
+      });
+      if (yearly) return yearly;
+
       await store.insertEntry(entry, days);
 
       if (evaluation.postsLedger) {
@@ -451,8 +636,7 @@ export async function submitLeave(
       };
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "submit failed";
-    if (/overlap|unique|already exists/i.test(message)) {
+    if (isOccupancyConflict(err)) {
       return fail(409, "OVERLAP", "A consuming leave day already occupies that date and portion.");
     }
     throw err;
@@ -460,9 +644,18 @@ export async function submitLeave(
 }
 
 const dbAls = new AsyncLocalStorage<LedgerDb>();
+const rootAls = new AsyncLocalStorage<LedgerDb>();
 
 function currentDb(): LedgerDb {
-  return dbAls.getStore() ?? getDb();
+  return dbAls.getStore() ?? rootAls.getStore() ?? getDb();
+}
+
+function currentRoot(): LedgerDb {
+  return rootAls.getStore() ?? getDb();
+}
+
+export function runWithLeaveDb<T>(db: LedgerDb, fn: () => Promise<T>): Promise<T> {
+  return rootAls.run(db, fn);
 }
 
 function asIntent(value: string): Intent {
@@ -529,7 +722,7 @@ function toDayRecord(row: typeof leaveDays.$inferSelect): LeaveDayRecord {
 
 export const dbLeaveStore: LeaveStore = {
   async withEmployeeLock(employeeId, fn) {
-    return withEmployeeLock(getDb(), employeeId, async (tx) => dbAls.run(tx, fn));
+    return withEmployeeLock(currentRoot(), employeeId, async (tx) => dbAls.run(tx, fn));
   },
 
   async loadSubmitSnapshot(input) {
@@ -551,7 +744,7 @@ export const dbLeaveStore: LeaveStore = {
       .where(eq(employees.id, input.employeeId))
       .limit(1);
     const emp = empRows[0];
-    if (!emp) return null;
+    if (!emp) return { ok: false, reason: "not_found" };
 
     const typeRows = await db
       .select({
@@ -564,7 +757,7 @@ export const dbLeaveStore: LeaveStore = {
       .where(and(eq(leaveTypes.id, input.leaveTypeId), eq(leaveTypes.orgId, emp.orgId)))
       .limit(1);
     const leaveType = typeRows[0];
-    if (!leaveType) return null;
+    if (!leaveType) return { ok: false, reason: "not_found" };
 
     const assigned = await db
       .select({
@@ -586,7 +779,7 @@ export const dbLeaveStore: LeaveStore = {
       )
       .limit(1);
     const policyRow = assigned[0];
-    if (!policyRow) return null;
+    if (!policyRow) return { ok: false, reason: "no_policy" };
 
     const holidayRows = await db
       .select({ onDate: holidays.onDate })
@@ -634,6 +827,17 @@ export const dbLeaveStore: LeaveStore = {
       .from(policyPeriods)
       .where(eq(policyPeriods.orgId, emp.orgId));
 
+    const settingsRows = await db
+      .select({
+        appReadonly: orgSettings.appReadonly,
+        selfLogEnabled: orgSettings.selfLogEnabled,
+        requestsEnabled: orgSettings.requestsEnabled,
+      })
+      .from(orgSettings)
+      .where(eq(orgSettings.orgId, emp.orgId))
+      .limit(1);
+    const settings = settingsRows[0];
+
     const today = input.today ?? todayInTimeZone(emp.timezone);
     const balance = await getBalance(db, {
       employeeId: input.employeeId,
@@ -656,36 +860,53 @@ export const dbLeaveStore: LeaveStore = {
         : "none";
 
     return {
-      employee: {
-        id: emp.id,
-        startDate: emp.startDate,
-        workdayMinutes: emp.workdayMinutes,
-        role: emp.role,
-        managerId: emp.managerId,
-        orgWorkdayMinutes: emp.orgWorkdayMinutes,
-        weekendDays: emp.weekendDays,
-        timezone: emp.timezone,
+      ok: true,
+      snapshot: {
+        employee: {
+          id: emp.id,
+          startDate: emp.startDate,
+          workdayMinutes: emp.workdayMinutes,
+          role: emp.role,
+          managerId: emp.managerId,
+          orgWorkdayMinutes: emp.orgWorkdayMinutes,
+          weekendDays: emp.weekendDays,
+          timezone: emp.timezone,
+        },
+        leaveType,
+        policy: {
+          takeCeilingMinutes: policyRow.takeCeilingMinutes,
+          minIncrementMinutes: policyRow.minIncrementMinutes,
+          negativeAllowed: policyRow.negativeAllowed,
+          negativeFloorMinutes: policyRow.negativeFloorMinutes,
+          waitingPeriodDays: policyRow.waitingPeriodDays,
+          approvalForRequest,
+          approvalForLog,
+          consumesBalance: leaveType.consumesBalance,
+          unlimited: leaveType.unlimited,
+          weekendDays: emp.weekendDays,
+          workdayMinutes: emp.orgWorkdayMinutes,
+        },
+        holidays: holidayRows,
+        existing,
+        periodStatuses: periodRows,
+        today,
+        balance,
+        orgSettings: {
+          appReadonly: settings?.appReadonly ?? false,
+          selfLogEnabled: settings?.selfLogEnabled ?? true,
+          requestsEnabled: settings?.requestsEnabled ?? true,
+        },
       },
-      leaveType,
-      policy: {
-        takeCeilingMinutes: policyRow.takeCeilingMinutes,
-        minIncrementMinutes: policyRow.minIncrementMinutes,
-        negativeAllowed: policyRow.negativeAllowed,
-        negativeFloorMinutes: policyRow.negativeFloorMinutes,
-        waitingPeriodDays: policyRow.waitingPeriodDays,
-        approvalForRequest,
-        approvalForLog,
-        consumesBalance: leaveType.consumesBalance,
-        unlimited: leaveType.unlimited,
-        weekendDays: emp.weekendDays,
-        workdayMinutes: emp.orgWorkdayMinutes,
-      },
-      holidays: holidayRows,
-      existing,
-      periodStatuses: periodRows,
-      today,
-      balance,
     };
+  },
+
+  async getBalanceAsOf(input) {
+    return getBalance(currentDb(), {
+      employeeId: input.employeeId,
+      leaveTypeId: input.leaveTypeId,
+      asOf: input.asOf,
+      timeZone: input.timeZone,
+    });
   },
 
   async insertEntry(entry, days) {

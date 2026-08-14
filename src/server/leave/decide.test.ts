@@ -151,8 +151,8 @@ describe("decideLeave", () => {
     expect(store.ledger.rows.filter((row) => row.kind === "usage" && row.reversedAt == null)).toHaveLength(1);
 
     const cancelled = await decideLeave(
-      { actor: alice, entryId: submitted.entry.id, action: "cancel", today: TODAY },
-      { store, writeAudit: async () => undefined },
+      { actor: alice, entryId: submitted.entry.id, action: "cancel" },
+      { store, writeAudit: async () => undefined, today: TODAY },
     );
     expect(cancelled.ok).toBe(true);
     if (!cancelled.ok) return;
@@ -172,10 +172,67 @@ describe("decideLeave", () => {
       { store, writeAudit: async () => undefined },
     );
     const denied = await decideLeave(
-      { actor: alice, entryId: submitted.entry.id, action: "cancel", today: MON },
-      { store, writeAudit: async () => undefined },
+      { actor: alice, entryId: submitted.entry.id, action: "cancel" },
+      { store, writeAudit: async () => undefined, today: MON },
     );
     expect(denied).toMatchObject({ ok: false, status: 403 });
+  });
+
+  it("posts the stored LeaveDays even if a holiday is added after submit", async () => {
+    const store = world();
+    const submitted = await submitLeave(
+      {
+        actor: alice,
+        employeeId: store.employee.id,
+        leaveTypeId: store.leaveType.id,
+        startDate: MON,
+        endDate: "2026-07-08",
+        portion: "full",
+      },
+      { store, writeAudit: async () => undefined },
+    );
+    expect(submitted.ok).toBe(true);
+    if (!submitted.ok) return;
+    expect(submitted.days.map((day) => day.onDate)).toEqual([MON, "2026-07-07", "2026-07-08"]);
+
+    store.holidays.push({ onDate: "2026-07-07" });
+    const decided = await decideLeave(
+      { actor: admin, entryId: submitted.entry.id, action: "approve" },
+      { store, writeAudit: async () => undefined },
+    );
+    expect(decided.ok).toBe(true);
+    if (!decided.ok) return;
+    const usageOn = store.ledger.rows
+      .filter((row) => row.kind === "usage")
+      .map((row) => row.effectiveOn)
+      .sort();
+    expect(usageOn).toEqual([MON, "2026-07-07", "2026-07-08"]);
+  });
+
+  it("persists adminNote only for an admin actor", async () => {
+    const store = world();
+    const submitted = await submitMonday(store);
+    expect(submitted.ok).toBe(true);
+    if (!submitted.ok) return;
+
+    const cancelled = await decideLeave(
+      { actor: alice, entryId: submitted.entry.id, action: "cancel", adminNote: "secret" },
+      { store, writeAudit: async () => undefined },
+    );
+    expect(cancelled.ok).toBe(true);
+    if (!cancelled.ok) return;
+    expect(cancelled.entry.adminNote).toBeNull();
+
+    const second = await submitMonday(store);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    const rejected = await decideLeave(
+      { actor: admin, entryId: second.entry.id, action: "reject", adminNote: "need coverage" },
+      { store, writeAudit: async () => undefined },
+    );
+    expect(rejected.ok).toBe(true);
+    if (!rejected.ok) return;
+    expect(rejected.entry.adminNote).toBe("need coverage");
   });
 
   it("rejects pending without posting usage and frees the slot", async () => {

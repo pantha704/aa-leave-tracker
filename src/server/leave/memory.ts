@@ -1,10 +1,13 @@
-import { MemoryLedger } from "@/server/ledger/memory";
 import { computeBalance } from "@/server/ledger/balance";
+import { MemoryLedger, SerialLock } from "@/server/ledger/memory";
+import { portionsConflict } from "@/server/policy/rules/overlap";
 import type { ExistingLeave, HolidayDate, PeriodStatus, PolicySnapshot } from "@/server/policy/types";
 import type {
   LeaveDayRecord,
   LeaveEntryRecord,
   LeaveStore,
+  LoadSnapshotResult,
+  OrgLeaveSettings,
   SubmitSnapshot,
 } from "./submit";
 
@@ -15,10 +18,19 @@ export type MemoryWorld = {
   holidays?: HolidayDate[];
   periodStatuses?: PeriodStatus[];
   today: string;
+  orgSettings?: Partial<OrgLeaveSettings>;
+  hasPolicy?: boolean;
+};
+
+const DEFAULT_ORG_SETTINGS: OrgLeaveSettings = {
+  appReadonly: false,
+  selfLogEnabled: true,
+  requestsEnabled: true,
 };
 
 export class MemoryLeaveStore implements LeaveStore {
   readonly ledger = new MemoryLedger();
+  readonly lock = new SerialLock();
   readonly entries: LeaveEntryRecord[] = [];
   readonly days: LeaveDayRecord[] = [];
   holidays: HolidayDate[] = [];
@@ -27,6 +39,8 @@ export class MemoryLeaveStore implements LeaveStore {
   employee: SubmitSnapshot["employee"];
   leaveType: SubmitSnapshot["leaveType"];
   policy: PolicySnapshot;
+  orgSettings: OrgLeaveSettings;
+  hasPolicy: boolean;
 
   constructor(world: MemoryWorld) {
     this.employee = world.employee;
@@ -35,21 +49,67 @@ export class MemoryLeaveStore implements LeaveStore {
     this.holidays = [...(world.holidays ?? [])];
     this.periodStatuses = [...(world.periodStatuses ?? [])];
     this.today = world.today;
+    this.orgSettings = { ...DEFAULT_ORG_SETTINGS, ...world.orgSettings };
+    this.hasPolicy = world.hasPolicy !== false;
   }
 
-  async withEmployeeLock<T>(_employeeId: string, fn: () => Promise<T>): Promise<T> {
-    return fn();
+  async withEmployeeLock<T>(employeeId: string, fn: () => Promise<T>): Promise<T> {
+    return this.lock.withLock(employeeId, fn);
   }
 
   async loadSubmitSnapshot(input: {
     employeeId: string;
     leaveTypeId: string;
     today?: string;
-  }): Promise<SubmitSnapshot | null> {
-    if (input.employeeId !== this.employee.id) return null;
-    if (input.leaveTypeId !== this.leaveType.id) return null;
+  }): Promise<LoadSnapshotResult> {
+    if (input.employeeId !== this.employee.id) return { ok: false, reason: "not_found" };
+    if (input.leaveTypeId !== this.leaveType.id) return { ok: false, reason: "not_found" };
+    if (!this.hasPolicy) return { ok: false, reason: "no_policy" };
     const today = input.today ?? this.today;
     const existing = this.existingLeaves();
+    this.syncPending();
+    const balance = computeBalance({
+      rows: this.ledger.rows,
+      pendingEntries: this.ledger.pending,
+      asOf: today,
+      timeZone: this.employee.timezone,
+      employeeId: input.employeeId,
+      leaveTypeId: input.leaveTypeId,
+    });
+    return {
+      ok: true,
+      snapshot: {
+        employee: this.employee,
+        leaveType: this.leaveType,
+        policy: this.policy,
+        holidays: this.holidays,
+        existing,
+        periodStatuses: this.periodStatuses,
+        today,
+        balance,
+        orgSettings: this.orgSettings,
+      },
+    };
+  }
+
+  async getBalanceAsOf(input: {
+    employeeId: string;
+    leaveTypeId: string;
+    asOf: string;
+    timeZone?: string;
+  }) {
+    this.syncPending();
+    return computeBalance({
+      rows: this.ledger.rows,
+      pendingEntries: this.ledger.pending,
+      asOf: input.asOf,
+      timeZone: input.timeZone ?? this.employee.timezone,
+      employeeId: input.employeeId,
+      leaveTypeId: input.leaveTypeId,
+    });
+  }
+
+  syncPending() {
     this.ledger.pending = this.entries
       .filter((entry) => entry.status === "pending")
       .map((entry) => ({
@@ -63,24 +123,6 @@ export class MemoryLeaveStore implements LeaveStore {
           .filter((day) => day.leaveEntryId === entry.id)
           .map((day) => ({ onDate: day.onDate, minutes: day.minutes })),
       }));
-    const balance = computeBalance({
-      rows: this.ledger.rows,
-      pendingEntries: this.ledger.pending,
-      asOf: today,
-      timeZone: this.employee.timezone,
-      employeeId: input.employeeId,
-      leaveTypeId: input.leaveTypeId,
-    });
-    return {
-      employee: this.employee,
-      leaveType: this.leaveType,
-      policy: this.policy,
-      holidays: this.holidays,
-      existing,
-      periodStatuses: this.periodStatuses,
-      today,
-      balance,
-    };
   }
 
   existingLeaves(): ExistingLeave[] {
@@ -112,9 +154,9 @@ export class MemoryLeaveStore implements LeaveStore {
         (other) =>
           other.employeeId === day.employeeId &&
           other.onDate === day.onDate &&
-          other.portion === day.portion &&
           other.consumesBalance &&
-          other.slotActive,
+          other.slotActive &&
+          portionsConflict(other.portion, day.portion),
       );
       if (clash) {
         throw new Error("overlap: consuming slot already active");

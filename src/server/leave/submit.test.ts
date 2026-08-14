@@ -70,6 +70,7 @@ function world(overrides: Partial<ConstructorParameters<typeof MemoryLeaveStore>
 function submit(
   store: MemoryLeaveStore,
   extras: Partial<Parameters<typeof submitLeave>[0]> = {},
+  optionExtras: Partial<Parameters<typeof submitLeave>[1]> = {},
 ) {
   return submitLeave(
     {
@@ -81,7 +82,7 @@ function submit(
       portion: "full",
       ...extras,
     },
-    { store, writeAudit: async () => undefined },
+    { store, writeAudit: async () => undefined, ...optionExtras },
   );
 }
 
@@ -174,5 +175,62 @@ describe("submitLeave", () => {
   it("lets admin submit on behalf", async () => {
     const result = await submit(world(), { actor: admin });
     expect(result.ok).toBe(true);
+  });
+
+  it("does not treat a client today field as the org clock", async () => {
+    const store = world();
+    const sneaky = {
+      actor: alice,
+      employeeId: store.employee.id,
+      leaveTypeId: store.leaveType.id,
+      startDate: MON,
+      endDate: MON,
+      portion: "full" as const,
+      today: "2099-01-01",
+    };
+    const result = await submitLeave(sneaky, { store, writeAudit: async () => undefined });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.intent).toBe("request");
+    expect(result.entry.status).toBe("pending");
+    expect(result.ledgerPosted).toBe(false);
+  });
+
+  it("checks negative balance in the year the days post, not year(today)", async () => {
+    const store = world({
+      today: "2026-12-15",
+      periodStatuses: [
+        { year: 2026, status: "open" },
+        { year: 2027, status: "open" },
+      ],
+    });
+    store.policy = { ...openPolicy, negativeAllowed: false };
+    const result = await submit(store, {
+      startDate: "2027-01-05",
+      endDate: "2027-01-05",
+    });
+    expect(result).toMatchObject({ ok: false, status: 422, code: "NEGATIVE_BALANCE" });
+  });
+
+  it("returns NO_POLICY when the employee and type exist but assignment does not", async () => {
+    const result = await submit(world({ hasPolicy: false }));
+    expect(result).toMatchObject({ ok: false, status: 422, code: "NO_POLICY" });
+  });
+
+  it("blocks writes when readonly / self-log / requests flags are off", async () => {
+    const readonly = await submit(world({ orgSettings: { appReadonly: true } }), {
+      startDate: "2026-06-08",
+      endDate: "2026-06-08",
+    });
+    expect(readonly).toMatchObject({ ok: false, status: 403, code: "APP_READONLY" });
+
+    const noLog = await submit(world({ orgSettings: { selfLogEnabled: false } }), {
+      startDate: "2026-06-08",
+      endDate: "2026-06-08",
+    });
+    expect(noLog).toMatchObject({ ok: false, status: 422, code: "SELF_LOG_DISABLED" });
+
+    const noReq = await submit(world({ orgSettings: { requestsEnabled: false } }));
+    expect(noReq).toMatchObject({ ok: false, status: 422, code: "REQUESTS_DISABLED" });
   });
 });

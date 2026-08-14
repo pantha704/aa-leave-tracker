@@ -3,7 +3,7 @@ import { expandLeaveDays } from "../days";
 
 const INACTIVE = new Set(["rejected", "cancelled"]);
 
-function portionsConflict(a: Portion, b: Portion): boolean {
+export function portionsConflict(a: Portion, b: Portion): boolean {
   if (a === "full" || a === "custom" || b === "full" || b === "custom") return true;
   return a === b;
 }

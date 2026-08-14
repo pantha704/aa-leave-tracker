@@ -21,6 +21,9 @@ export default async function AdminPage() {
         <a className="underline" href="/admin/leave-types">
           Leave types
         </a>
+        <a className="underline" href="/admin/export">
+          CSV export
+        </a>
       </nav>
     </div>
   );

@@ -37,6 +37,16 @@ export default async function AdminEmployeeFilePage({
           {employee.endDate ? ` · end ${employee.endDate}` : ""} ·{" "}
           {employee.active ? "active" : "inactive"}
         </p>
+        <p className="mt-2 text-sm">
+          <a
+            className="underline"
+            href={`/api/admin/export/termination.csv?employeeId=${employee.id}${
+              employee.endDate ? `&endDate=${employee.endDate}` : ""
+            }`}
+          >
+            Download termination CSV
+          </a>
+        </p>
       </header>
 
       <section>

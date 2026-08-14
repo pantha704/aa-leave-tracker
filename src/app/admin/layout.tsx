@@ -21,6 +21,9 @@ export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
           <a className="underline" href="/admin/leave-types">
             Leave types
           </a>
+          <a className="underline" href="/admin/export">
+            Export
+          </a>
           <a
             className="ml-auto rounded-full bg-zinc-900 px-2.5 py-0.5 text-xs font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
             href="/admin/employees#pending"

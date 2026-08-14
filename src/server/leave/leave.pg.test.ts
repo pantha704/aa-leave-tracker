@@ -146,7 +146,7 @@ describe.skipIf(!url)("leave submit against Postgres", () => {
           endDate: MON,
           portion: "full",
         },
-        { today: TODAY, writeAudit: async () => undefined },
+        { today: TODAY, writeAudit: async () => undefined, notify: async () => undefined },
       );
       expect(first.ok).toBe(true);
       if (!first.ok) return;
@@ -173,7 +173,7 @@ describe.skipIf(!url)("leave submit against Postgres", () => {
           endDate: MON,
           portion: "full",
         },
-        { today: TODAY, writeAudit: async () => undefined },
+        { today: TODAY, writeAudit: async () => undefined, notify: async () => undefined },
       );
       expect(second.ok).toBe(true);
       if (!second.ok) return;

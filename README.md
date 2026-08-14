@@ -98,6 +98,10 @@ Authenticated flows need a running app plus creds with `must_change_password = f
 
 Without those env vars the `@smoke` specs still run. Override the server with `PLAYWRIGHT_BASE_URL` if it is already running.
 
+## Email
+
+Leave pending mail is optional. Set `RESEND_API_KEY` or `SMTP_URL` (and `EMAIL_FROM`) to send one `leave.pending` email to active admin addresses. Send and the admin banner both read those env vars; `org_settings.email_enabled` is a **mirror** of whether a key is set, not a separate kill switch. If neither key is set, the column stays false and every `/admin` page shows: **Email is off; check pending daily.** A send failure is logged (4s timeout) and does not fail or hang submit. SMTP AUTH runs only after STARTTLS or `smtps://`.
+
 Do not commit `.env`.
 
 ## Year-end close (ops)

@@ -13,7 +13,6 @@ import {
   policyAssignments,
   policyPeriods,
 } from "@/db/schema";
-import { hoursToMinutes } from "@/lib/hours";
 import { tryWriteAudit, writeAuditEvent, type AuditWriter } from "@/server/audit";
 import { canAdmin, canReadEmployee, type AuthzActor } from "@/server/authz";
 import {
@@ -51,13 +50,17 @@ import type {
   Portion,
 } from "@/server/policy/types";
 import { getDb } from "@/server/db";
-import { APP_READONLY_CODE, APP_READONLY_MESSAGE } from "@/server/settings";
+import {
+  notifyPendingLeaveEntry,
+  tryNotifyLeavePending,
+  type PendingLeaveEntryNotice,
+} from "@/server/notify";
 import { expandToLeaveDays } from "./expand";
 
 const DECIMAL_HOURS = /^-?\d+(\.\d+)?$/;
 const PORTIONS = new Set<Portion>(["full", "am", "pm", "custom"]);
 
-export type LeaveFailStatus = 401 | 403 | 404 | 409 | 422 | 423;
+export type LeaveFailStatus = 401 | 403 | 404 | 409 | 422;
 
 export type LeaveFail = {
   ok: false;
@@ -202,6 +205,7 @@ export type SubmitLeaveOptions = {
   now?: Date;
   /** Test clock only. Production derives org-local today from `now`. */
   today?: string;
+  notify?: (input: PendingLeaveEntryNotice) => Promise<unknown>;
 };
 
 function fail(status: LeaveFailStatus, code: string, message: string): LeaveFail {
@@ -212,7 +216,10 @@ export function toApiCode(code: string): string {
   return code.toUpperCase();
 }
 
-export { hoursToMinutes };
+/** Hours stay at the API boundary; ledger and days are integer minutes. */
+export function hoursToMinutes(hours: string): number {
+  return Math.round(Number(hours) * 60);
+}
 
 export function parseCustomHours(hours: unknown):
   | { ok: true; minutes: number }
@@ -413,7 +420,7 @@ export function gateOrgWrites(
   intent: Intent,
 ): LeaveFail | null {
   if (settings.appReadonly) {
-    return fail(423, APP_READONLY_CODE, APP_READONLY_MESSAGE);
+    return fail(403, "APP_READONLY", "The application is in read-only mode.");
   }
   if (intent === "log" && !settings.selfLogEnabled) {
     return fail(422, "SELF_LOG_DISABLED", "Self-logging is disabled.");
@@ -475,7 +482,7 @@ export async function submitLeave(
   const now = options.now ?? new Date();
 
   try {
-    return await store.withEmployeeLock(input.employeeId, async () => {
+    const result = await store.withEmployeeLock(input.employeeId, async () => {
       const loaded = await store.loadSubmitSnapshot({
         employeeId: input.employeeId,
         leaveTypeId: input.leaveTypeId,
@@ -634,6 +641,16 @@ export async function submitLeave(
         ledgerPosted: evaluation.postsLedger,
       };
     });
+    if (result.ok && result.entry.status === "pending") {
+      await tryNotifyLeavePending(options.notify ?? notifyPendingLeaveEntry, {
+        employeeId: result.entry.employeeId,
+        leaveTypeId: result.entry.leaveTypeId,
+        entryId: result.entry.id,
+        startDate: result.entry.startDate,
+        endDate: result.entry.endDate,
+      });
+    }
+    return result;
   } catch (err) {
     if (isOccupancyConflict(err)) {
       return fail(409, "OVERLAP", "A consuming leave day already occupies that date and portion.");

@@ -82,7 +82,7 @@ function submit(
       portion: "full",
       ...extras,
     },
-    { store, writeAudit: async () => undefined, ...optionExtras },
+    { store, writeAudit: async () => undefined, notify: async () => undefined, ...optionExtras },
   );
 }
 
@@ -188,7 +188,11 @@ describe("submitLeave", () => {
       portion: "full" as const,
       today: "2099-01-01",
     };
-    const result = await submitLeave(sneaky, { store, writeAudit: async () => undefined });
+    const result = await submitLeave(sneaky, {
+      store,
+      writeAudit: async () => undefined,
+      notify: async () => undefined,
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.intent).toBe("request");
@@ -215,6 +219,28 @@ describe("submitLeave", () => {
   it("returns NO_POLICY when the employee and type exist but assignment does not", async () => {
     const result = await submit(world({ hasPolicy: false }));
     expect(result).toMatchObject({ ok: false, status: 422, code: "NO_POLICY" });
+  });
+
+  it("still returns 200 when leave.pending notify throws", async () => {
+    const store = world();
+    const error = console.error;
+    console.error = () => {};
+    try {
+      const result = await submit(
+        store,
+        {},
+        {
+          notify: async () => {
+            throw new Error("resend down");
+          },
+        },
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.entry.status).toBe("pending");
+    } finally {
+      console.error = error;
+    }
   });
 
   it("blocks writes when readonly / self-log / requests flags are off", async () => {

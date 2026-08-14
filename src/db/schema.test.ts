@@ -7,6 +7,7 @@ import {
   DEMO_VACATION_TAKE_CEILING_MINUTES,
   DEMO_WORKDAY_MINUTES,
 } from "./demo-policy";
+import { readFileSync } from "node:fs";
 import { normalizeSeedAdminEmail, requireSeedAdminPassword, requireSeedTimezone } from "./seed";
 import {
   auditEvents,
@@ -138,6 +139,12 @@ describe("normative schema", () => {
     );
     expect(normalizeSeedAdminEmail("  a@b.C  ", "x@y.z")).toBe("a@b.c");
     expect(normalizeSeedAdminEmail(undefined, "Admin@X.local")).toBe("admin@x.local");
+  });
+
+  it("does not seed holiday rows", () => {
+    const src = readFileSync(new URL("./seed.ts", import.meta.url), "utf8");
+    expect(src).not.toMatch(/insert\(holidays\)/);
+    expect(src).toMatch(/No holiday rows seeded/);
   });
 
   it("adds must_change_password and auth_user_id on employees", () => {

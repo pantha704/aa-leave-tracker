@@ -57,7 +57,9 @@ Email + password via Better Auth. There is no public registration endpoint.
 - Seed creates the admin employee and a credential. `SEED_ADMIN_PASSWORD` is required.
 - First admin login is forced through `/login/change-password`.
 - After login: admin → `/admin`, employee → `/me`.
-- Employees who `GET /admin` receive **403** (not 404) from both the proxy and `authorizeAdmin` / `requireAdmin`.
+- Employees who `GET /admin` (including `/admin/holidays` and `/admin/leave-types`) receive **403** (not 404) from both the proxy and `authorizeAdmin` / `requireAdmin`.
+- Holidays start empty; import CSV (`date`, `name`, optional `region`). Unique per `(org, date, region)`. No holiday seed.
+- Leave types are admin CRUD (`code`, `name`, `consumes_balance`, `legal_unit` hours|days, min increment, color). Types with entries or related FK rows cannot be deleted.
 - Session cookies are `httpOnly`, `SameSite=Lax`, and `Secure` when `NODE_ENV=production`.
 - In production set `BETTER_AUTH_URL` to an `https://` origin.
 

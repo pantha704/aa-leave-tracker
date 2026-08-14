@@ -16,6 +16,16 @@ describe("auth gate", () => {
     expect(res.status).toBe(403);
   });
 
+  it("employee cannot GET holiday or leave-type admin pages (403)", () => {
+    const actor = {
+      kind: "authenticated" as const,
+      role: "employee" as const,
+      mustChangePassword: false,
+    };
+    expect(applyAuthGate(get("/admin/holidays"), actor).status).toBe(403);
+    expect(applyAuthGate(get("/admin/leave-types"), actor).status).toBe(403);
+  });
+
   it("unauthenticated GET /me is redirected or 401", () => {
     const res = applyAuthGate(get("/me"), { kind: "anonymous" });
     expect([301, 302, 303, 307, 308, 401]).toContain(res.status);

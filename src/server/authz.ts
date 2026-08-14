@@ -24,6 +24,10 @@ export function canAdmin(actor: AuthzActor | null | undefined): boolean {
   return actor?.role === "admin";
 }
 
+export function canCreateEmployee(actor: AuthzActor | null | undefined): boolean {
+  return canAdmin(actor);
+}
+
 export function canAdjustLedger(actor: AuthzActor | null | undefined): boolean {
   return canAdmin(actor);
 }

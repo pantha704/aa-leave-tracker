@@ -160,6 +160,23 @@ export async function getAuthzActor(request: NextRequest): Promise<AuthzActor | 
   };
 }
 
+export type RosterActor = AuthzActor & { orgId: string };
+
+export async function getRosterActor(request: NextRequest): Promise<RosterActor | null> {
+  const session = await getAuth().api.getSession({ headers: request.headers });
+  if (!session?.user?.email) return null;
+
+  const employee = await findEmployeeByUser(session.user);
+  if (!employee?.active) return null;
+  if (mustChangePasswordNow(toAccess(employee))) return null;
+
+  return {
+    id: employee.id,
+    role: employee.role as EmployeeRole,
+    orgId: employee.orgId,
+  };
+}
+
 export async function requireNotMustChangePassword() {
   const sessionCookie = getSessionCookie(await headers());
   if (!sessionCookie) return;

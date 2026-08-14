@@ -4,6 +4,15 @@ export type TenureBandInput = {
   grantMinutes: number;
 };
 
+/** Skip leftover Add-band rows. Preview and save use this same rule. */
+export function isBlankTenureBandRow(row: {
+  min_years: number | string | null;
+  max_years: number | string | null;
+  grant_minutes: number | string | null;
+}): boolean {
+  return row.min_years == null && row.max_years == null && row.grant_minutes == null;
+}
+
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 export function parseIsoDateParts(value: string): { year: number; month: number; day: number } | null {
@@ -31,12 +40,41 @@ export function tenureYears(startDate: string, asOf: string): number | null {
   return Math.max(0, years);
 }
 
-/** Inclusive on both ends. Null max_years is unbounded. First matching row wins. */
+export function sortTenureBands<T extends { minYears: number; maxYears: number | null }>(
+  bands: readonly T[],
+): T[] {
+  return [...bands].sort((left, right) => {
+    if (left.minYears !== right.minYears) return left.minYears - right.minYears;
+    if (left.maxYears == null && right.maxYears == null) return 0;
+    if (left.maxYears == null) return 1;
+    if (right.maxYears == null) return -1;
+    return left.maxYears - right.maxYears;
+  });
+}
+
+export function tenureBandMax(maxYears: number | null | undefined): number {
+  return maxYears == null ? Number.POSITIVE_INFINITY : maxYears;
+}
+
+/** Inclusive ranges share at least one year. */
+export function tenureBandsOverlap(
+  bands: readonly { minYears: number; maxYears: number | null }[],
+): boolean {
+  const ordered = sortTenureBands(bands);
+  for (let index = 1; index < ordered.length; index++) {
+    const prev = ordered[index - 1];
+    const next = ordered[index];
+    if (next.minYears <= tenureBandMax(prev.maxYears)) return true;
+  }
+  return false;
+}
+
+/** Inclusive on both ends. Null max_years is unbounded. Lowest min_years wins. */
 export function matchingTenureBand(
   bands: readonly TenureBandInput[],
   years: number,
 ): TenureBandInput | null {
-  for (const band of bands) {
+  for (const band of sortTenureBands(bands)) {
     if (years < band.minYears) continue;
     if (band.maxYears != null && years > band.maxYears) continue;
     return band;

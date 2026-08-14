@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import {
   employees,
@@ -11,7 +11,9 @@ import {
 import { tryWriteAudit, writeAuditEvent, type AuditWriter } from "@/server/audit";
 import { getDb } from "@/server/db";
 import { asOfDateString, getBalance, type Balance } from "@/server/ledger/balance";
-import type { TenureBandInput } from "./grant";
+import { isBlankTenureBandRow, tenureBandsOverlap, type TenureBandInput } from "./grant";
+
+export { isBlankTenureBandRow } from "./grant";
 
 export type { TenureBandInput } from "./grant";
 
@@ -77,7 +79,8 @@ export const policySaveSchema = z.object({
   min_increment_minutes: z.number().int().positive().default(60),
   effective_from: isoDate,
   effective_to: isoDate.nullable().optional(),
-  tenure_bands: z.array(tenureBandSchema).default([]),
+  /** Omitted on update means leave existing bands; `[]` clears. Create treats omit as `[]`. */
+  tenure_bands: z.array(tenureBandSchema).optional(),
 });
 
 export type PolicySaveInput = z.infer<typeof policySaveSchema>;
@@ -209,6 +212,17 @@ export function parsePolicyInput(raw: unknown): ParseOk<PolicySaveInput> | Parse
   if (value.effective_to && value.effective_to < value.effective_from) {
     return { ok: false, error: "effective_to must be on or after effective_from" };
   }
+  if (
+    value.tenure_bands &&
+    tenureBandsOverlap(
+      value.tenure_bands.map((band) => ({
+        minYears: band.min_years,
+        maxYears: band.max_years ?? null,
+      })),
+    )
+  ) {
+    return { ok: false, error: "tenure_bands must not overlap" };
+  }
   return { ok: true, value };
 }
 
@@ -260,7 +274,7 @@ export function policyInputFromFormData(formData: FormData): ParseOk<PolicySaveI
     const min_years = formNumberAt(minYears, index);
     const max_years = formNumberAt(maxYears, index);
     const grant_minutes = formNumberAt(bandGrants, index);
-    if (min_years == null && max_years == null && grant_minutes == null) continue;
+    if (isBlankTenureBandRow({ min_years, max_years, grant_minutes })) continue;
     tenure_bands.push({ min_years, max_years, grant_minutes });
   }
 
@@ -357,7 +371,8 @@ function attachBands(
   return { ...row, tenureBands: bands };
 }
 
-function bandRows(input: PolicySaveInput): TenureBandInput[] {
+function bandRows(input: PolicySaveInput): TenureBandInput[] | undefined {
+  if (input.tenure_bands === undefined) return undefined;
   return input.tenure_bands.map((band) => ({
     minYears: band.min_years,
     maxYears: band.max_years ?? null,
@@ -385,7 +400,7 @@ async function replaceTenureBands(
 }
 
 async function loadBands(
-  db: ReturnType<typeof getDb>,
+  db: Pick<ReturnType<typeof getDb>, "select">,
   policyIds: string[],
 ): Promise<Map<string, TenureBandInput[]>> {
   const map = new Map<string, TenureBandInput[]>();
@@ -399,7 +414,8 @@ async function loadBands(
       grantMinutes: policyTenureBands.grantMinutes,
     })
     .from(policyTenureBands)
-    .where(inArray(policyTenureBands.policyId, policyIds));
+    .where(inArray(policyTenureBands.policyId, policyIds))
+    .orderBy(asc(policyTenureBands.minYears), asc(policyTenureBands.maxYears));
   for (const row of rows) {
     map.get(row.policyId)?.push({
       minYears: row.minYears,
@@ -644,7 +660,7 @@ export const pgPolicyPersistence: PolicyPersistence = {
   },
   async insertPolicy(orgId, input) {
     const db = getDb();
-    const bands = bandRows(input);
+    const bands = bandRows(input) ?? [];
     return db.transaction(async (tx) => {
       const [row] = await tx
         .insert(policies)
@@ -674,6 +690,9 @@ export const pgPolicyPersistence: PolicyPersistence = {
         .where(and(eq(policies.id, id), eq(policies.orgId, orgId)))
         .returning(policyReturning);
       if (rows.length === 0) return null;
+      if (bands === undefined) {
+        return attachBands(rows[0], (await loadBands(tx, [id])).get(id) ?? []);
+      }
       await replaceTenureBands(tx, id, bands);
       return attachBands(rows[0], bands);
     });

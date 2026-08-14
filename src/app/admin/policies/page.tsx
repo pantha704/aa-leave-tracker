@@ -43,15 +43,16 @@ export default async function AdminPoliciesPage() {
         <h2 className="text-lg font-medium">New policy</h2>
         {types.length === 0 ? (
           <p className="text-sm text-zinc-600 dark:text-zinc-400">No leave types in this org yet.</p>
-        ) : null}
-        <PolicyForm
-          key={policyRows.map((row) => row.id).join("-")}
-          initialJson={newPolicyJson(types.length === 1 ? types[0].id : "")}
-          leaveTypes={types}
-          employees={people}
-          today={today}
-          workdayMinutes={workdayMinutes}
-        />
+        ) : (
+          <PolicyForm
+            key={policyRows.map((row) => row.id).join("-")}
+            initialJson={newPolicyJson(types.length === 1 ? types[0].id : "")}
+            leaveTypes={types}
+            employees={people}
+            today={today}
+            workdayMinutes={workdayMinutes}
+          />
+        )}
       </section>
 
       <section className="flex flex-col gap-6">

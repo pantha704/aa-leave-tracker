@@ -9,7 +9,11 @@ import {
   type ReactNode,
 } from "react";
 import type { Balance } from "@/server/ledger/balance";
-import { grantMinutesForTenure, type TenureBandInput } from "@/server/policy/grant";
+import {
+  grantMinutesForTenure,
+  isBlankTenureBandRow,
+  type TenureBandInput,
+} from "@/server/policy/grant";
 import {
   previewSampleBalanceAction,
   savePolicyAction,
@@ -43,7 +47,7 @@ type BandDraft = {
   grantMinutes: string;
 };
 
-const EMPTY_BAND: BandDraft = { minYears: "0", maxYears: "", grantMinutes: "" };
+const EMPTY_BAND: BandDraft = { minYears: "", maxYears: "", grantMinutes: "" };
 
 const PERIODS = ["calendar_year", "anniversary"] as const;
 const GRANT_MODES = ["lump_sum", "periodic", "hourly_worked", "none"] as const;
@@ -123,16 +127,12 @@ function bandsFromPolicy(policy?: PolicyFormValue): BandDraft[] {
 
 function parsedBands(drafts: BandDraft[]): TenureBandInput[] {
   return drafts.flatMap((band) => {
-    const minYears = optionalNumber(band.minYears);
-    const grantMinutes = optionalNumber(band.grantMinutes);
-    if (minYears == null || grantMinutes == null) return [];
-    return [
-      {
-        minYears,
-        maxYears: optionalNumber(band.maxYears),
-        grantMinutes,
-      },
-    ];
+    const min_years = optionalNumber(band.minYears);
+    const max_years = optionalNumber(band.maxYears);
+    const grant_minutes = optionalNumber(band.grantMinutes);
+    if (isBlankTenureBandRow({ min_years, max_years, grant_minutes })) return [];
+    if (min_years == null || grant_minutes == null) return [];
+    return [{ minYears: min_years, maxYears: max_years, grantMinutes: grant_minutes }];
   });
 }
 
@@ -199,6 +199,7 @@ export function PolicyForm({
   );
   const [bands, setBands] = useState<BandDraft[]>(() => bandsFromPolicy(policy));
   const [sampleId, setSampleId] = useState(employees[0]?.id ?? "");
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [balance, setBalance] = useState<Balance | null>(null);
   const [balanceError, setBalanceError] = useState<string | null>(null);
   const [balancePending, startBalance] = useTransition();
@@ -215,7 +216,7 @@ export function PolicyForm({
   }, [sample, grantMinutes, bands, today]);
 
   useEffect(() => {
-    if (!sample || !leaveTypeId) return;
+    if (!previewOpen || !sample || !leaveTypeId) return;
     let cancelled = false;
     startBalance(async () => {
       const result = await previewSampleBalanceAction(sample.id, leaveTypeId);
@@ -231,7 +232,7 @@ export function PolicyForm({
     return () => {
       cancelled = true;
     };
-  }, [sample, leaveTypeId]);
+  }, [previewOpen, sample, leaveTypeId]);
 
   const sampleWorkday = sample?.workdayMinutes ?? workdayMinutes;
 
@@ -579,8 +580,11 @@ export function PolicyForm({
         )}
       </div>
 
-      <div className="rounded border border-zinc-200 px-3 py-3 dark:border-zinc-800">
-        <h3 className="text-sm font-medium">Preview</h3>
+      <details
+        className="rounded border border-zinc-200 px-3 py-3 dark:border-zinc-800"
+        onToggle={(event) => setPreviewOpen(event.currentTarget.open)}
+      >
+        <summary className="cursor-pointer text-sm font-medium">Preview</summary>
         <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
           Tenure uses the sample employee start date vs org today ({today}). Grant is computed
           from the draft form, not a saved policy.
@@ -644,7 +648,12 @@ export function PolicyForm({
             )}
           </div>
         )}
-      </div>
+      </details>
+
+      <FormAlert state={state} />
+      <button className={`${buttonClass} w-fit`} type="submit" name="mode" value="form" disabled={pending}>
+        {id ? "Save policy" : "Create policy"}
+      </button>
 
       <details className="rounded border border-zinc-200 px-3 py-2 dark:border-zinc-800">
         <summary className="cursor-pointer text-sm font-medium">Advanced JSON</summary>
@@ -667,11 +676,6 @@ export function PolicyForm({
           Save JSON
         </button>
       </details>
-
-      <FormAlert state={state} />
-      <button className={`${buttonClass} w-fit`} type="submit" name="mode" value="form" disabled={pending}>
-        {id ? "Save policy" : "Create policy"}
-      </button>
     </form>
   );
 }

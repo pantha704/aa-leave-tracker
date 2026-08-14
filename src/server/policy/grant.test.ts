@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { grantMinutesForTenure, matchingTenureBand, tenureYears } from "./grant";
+import {
+  grantMinutesForTenure,
+  isBlankTenureBandRow,
+  matchingTenureBand,
+  tenureBandsOverlap,
+  tenureYears,
+} from "./grant";
 
 const bands = [
   { minYears: 0, maxYears: 4, grantMinutes: 8160 },
@@ -30,6 +36,41 @@ describe("matchingTenureBand", () => {
 
   it("returns null when no band matches", () => {
     expect(matchingTenureBand([{ minYears: 5, maxYears: 9, grantMinutes: 9600 }], 2)).toBeNull();
+  });
+
+  it("matches after sorting so load order does not change the grant", () => {
+    const reversed = [...bands].reverse();
+    expect(matchingTenureBand(reversed, 3)?.grantMinutes).toBe(8160);
+    expect(matchingTenureBand(reversed, 7)?.grantMinutes).toBe(9600);
+  });
+});
+
+describe("tenureBandsOverlap", () => {
+  it("treats inclusive ends that share a year as overlap", () => {
+    expect(
+      tenureBandsOverlap([
+        { minYears: 0, maxYears: 5 },
+        { minYears: 5, maxYears: 10 },
+      ]),
+    ).toBe(true);
+  });
+
+  it("allows adjacent inclusive ranges", () => {
+    expect(
+      tenureBandsOverlap([
+        { minYears: 0, maxYears: 4 },
+        { minYears: 5, maxYears: 9 },
+      ]),
+    ).toBe(false);
+  });
+});
+
+describe("isBlankTenureBandRow", () => {
+  it("skips unused add-band rows", () => {
+    expect(isBlankTenureBandRow({ min_years: null, max_years: null, grant_minutes: null })).toBe(
+      true,
+    );
+    expect(isBlankTenureBandRow({ min_years: 0, max_years: null, grant_minutes: null })).toBe(false);
   });
 });
 

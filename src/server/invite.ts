@@ -430,7 +430,7 @@ export async function acceptInvite(
   const { now, writeAudit, hashPassword, store } = resolveDeps(deps);
   const password = input.password;
   if (password.length < 8) {
-    return { ok: false, status: 400, error: "Password must be at least 8 characters" };
+    return { ok: false, status: 400, error: "Password must be at least 6 characters" };
   }
 
   const loaded = await loadUsableInvite(input.rawToken, deps);

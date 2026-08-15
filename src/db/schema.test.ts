@@ -8,7 +8,12 @@ import {
   DEMO_WORKDAY_MINUTES,
 } from "./demo-policy";
 import { readFileSync } from "node:fs";
-import { normalizeSeedAdminEmail, requireSeedAdminPassword, requireSeedTimezone } from "./seed";
+import {
+  normalizeSeedAdminEmail,
+  requireSeedAdminPassword,
+  requireSeedTimezone,
+  resolveSeedAdmins,
+} from "./seed";
 import {
   auditEvents,
   blackoutDates,
@@ -128,10 +133,10 @@ describe("normative schema", () => {
     expect(() => requireSeedAdminPassword({ SEED_ADMIN_PASSWORD: "" })).toThrow(
       /SEED_ADMIN_PASSWORD is required/,
     );
-    expect(() => requireSeedAdminPassword({ SEED_ADMIN_PASSWORD: "short" })).toThrow(
-      /at least 8 characters/,
+    expect(() => requireSeedAdminPassword({ SEED_ADMIN_PASSWORD: "ab" })).toThrow(
+      /at least 6 characters/,
     );
-    expect(requireSeedAdminPassword({ SEED_ADMIN_PASSWORD: "long-enough" })).toBe("long-enough");
+    expect(requireSeedAdminPassword({ SEED_ADMIN_PASSWORD: "das@21" })).toBe("das@21");
   });
 
   it("stores seed admin email in lowercase", () => {
@@ -140,6 +145,21 @@ describe("normative schema", () => {
     );
     expect(normalizeSeedAdminEmail("  a@b.C  ", "x@y.z")).toBe("a@b.c");
     expect(normalizeSeedAdminEmail(undefined, "Admin@X.local")).toBe("admin@x.local");
+  });
+
+  it("defaults seed admins to preston and das", () => {
+    expect(resolveSeedAdmins({})).toEqual([
+      { email: "preston@absoluteaddiction.com", name: "Preston" },
+      { email: "das@absoluteaddiction.com", name: "Das" },
+    ]);
+    expect(
+      resolveSeedAdmins({
+        SEED_ADMIN_EMAILS: "Preston@AbsoluteAddiction.com, das@absoluteaddiction.com",
+      }),
+    ).toEqual([
+      { email: "preston@absoluteaddiction.com", name: "Preston" },
+      { email: "das@absoluteaddiction.com", name: "Das" },
+    ]);
   });
 
   it("does not seed holiday rows", () => {

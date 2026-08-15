@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
-  DEMO_DEFAULT_ADMIN_EMAIL,
+  DEMO_DEFAULT_OPERATORS,
   DEMO_MIN_INCREMENT_MINUTES,
   DEMO_ORG_NAME,
   DEMO_SICK_GRANT_MINUTES,
@@ -20,7 +20,15 @@ import {
 } from "./demo-policy";
 import { hashPassword } from "better-auth/crypto";
 import { account, user } from "./auth-schema";
-import { employees, leaveTypes, organizations, orgSettings, policies, policyPeriods } from "./schema";
+import {
+  employees,
+  leaveTypes,
+  organizations,
+  orgSettings,
+  policies,
+  policyAssignments,
+  policyPeriods,
+} from "./schema";
 import { getDatabaseUrl } from "../server/db";
 
 type SeedEnv = Partial<Record<string, string | undefined>>;
@@ -40,13 +48,52 @@ export function normalizeSeedAdminEmail(raw: string | undefined, fallback: strin
   return email;
 }
 
+export type SeedAdmin = { email: string; name: string };
+
+function nameFromEmail(email: string): string {
+  const local = email.split("@")[0] ?? email;
+  if (!local) return email;
+  return local.charAt(0).toUpperCase() + local.slice(1);
+}
+
+export function resolveSeedAdmins(env: SeedEnv = process.env): SeedAdmin[] {
+  const listed = env.SEED_ADMIN_EMAILS?.split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((email) => {
+      const normalized = email.toLowerCase();
+      const known = DEMO_DEFAULT_OPERATORS.find((op) => op.email === normalized);
+      return { email: normalized, name: known?.name ?? nameFromEmail(normalized) };
+    });
+  if (listed && listed.length > 0) {
+    return listed.filter(
+      (admin, index) => listed.findIndex((other) => other.email === admin.email) === index,
+    );
+  }
+
+  const primary = normalizeSeedAdminEmail(env.SEED_ADMIN_EMAIL, DEMO_DEFAULT_OPERATORS[0].email);
+  const secondRaw = env.SEED_SECOND_ADMIN_EMAIL?.trim();
+  const second = secondRaw
+    ? secondRaw.toLowerCase()
+    : DEMO_DEFAULT_OPERATORS[1].email;
+  const knownPrimary = DEMO_DEFAULT_OPERATORS.find((op) => op.email === primary);
+  const knownSecond = DEMO_DEFAULT_OPERATORS.find((op) => op.email === second);
+  const admins: SeedAdmin[] = [
+    { email: primary, name: knownPrimary?.name ?? nameFromEmail(primary) },
+  ];
+  if (second !== primary) {
+    admins.push({ email: second, name: knownSecond?.name ?? nameFromEmail(second) });
+  }
+  return admins;
+}
+
 export function requireSeedAdminPassword(env: SeedEnv = process.env): string {
   const password = env.SEED_ADMIN_PASSWORD;
   if (!password || password.length === 0) {
     throw new Error("SEED_ADMIN_PASSWORD is required");
   }
-  if (password.length < 8) {
-    throw new Error("SEED_ADMIN_PASSWORD must be at least 8 characters");
+  if (password.length < 6) {
+    throw new Error("SEED_ADMIN_PASSWORD must be at least 6 characters");
   }
   return password;
 }
@@ -74,8 +121,7 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
     throw new Error("DATABASE_URL is required to seed");
   }
 
-  const adminEmail = normalizeSeedAdminEmail(env.SEED_ADMIN_EMAIL, DEMO_DEFAULT_ADMIN_EMAIL);
-  const passwordHash = await hashPassword(adminPassword);
+  const admins = resolveSeedAdmins(env);
   const today = todayInTimeZone(timezone);
   const year = calendarYearInTimeZone(timezone);
   const periodStart = `${year}-01-01`;
@@ -104,6 +150,46 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
         teamCalendarEnabled: false,
       });
 
+      async function insertPerson(opts: {
+        email: string;
+        name: string;
+        role: "admin" | "employee";
+        password: string;
+      }) {
+        const authUserId = crypto.randomUUID();
+        const now = new Date();
+        await tx.insert(user).values({
+          id: authUserId,
+          name: opts.name,
+          email: opts.email,
+          emailVerified: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await tx.insert(account).values({
+          id: crypto.randomUUID(),
+          accountId: authUserId,
+          providerId: "credential",
+          userId: authUserId,
+          password: await hashPassword(opts.password),
+          createdAt: now,
+          updatedAt: now,
+        });
+        const [person] = await tx
+          .insert(employees)
+          .values({
+            orgId: org.id,
+            email: opts.email,
+            name: opts.name,
+            role: opts.role,
+            startDate: today,
+            authUserId,
+            mustChangePassword: false,
+          })
+          .returning({ id: employees.id });
+        return person.id;
+      }
+
       const [vacationType, sickType] = await tx
         .insert(leaveTypes)
         .values([
@@ -127,65 +213,55 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
       const vacationId = vacationType.code === DEMO_VACATION_TYPE_CODE ? vacationType.id : sickType.id;
       const sickId = sickType.code === DEMO_SICK_TYPE_CODE ? sickType.id : vacationType.id;
 
-      await tx.insert(policies).values([
-        {
-          orgId: org.id,
-          leaveTypeId: vacationId,
-          name: DEMO_VACATION_POLICY_NAME,
-          grantMode: "periodic",
-          grantMinutes: DEMO_VACATION_GRANT_MINUTES,
-          periodicCadence: "monthly",
-          periodicMinutes: DEMO_VACATION_PERIODIC_MINUTES,
-          takeCeilingMinutes: DEMO_VACATION_TAKE_CEILING_MINUTES,
-          allowForfeit: false,
-          approvalForRequest: "admin",
-          approvalForLog: "none",
-          minIncrementMinutes: DEMO_MIN_INCREMENT_MINUTES,
-          effectiveFrom: periodStart,
-        },
-        {
-          orgId: org.id,
-          leaveTypeId: sickId,
-          name: DEMO_SICK_POLICY_NAME,
-          grantMode: "lump_sum",
-          grantMinutes: DEMO_SICK_GRANT_MINUTES,
-          takeCeilingMinutes: DEMO_SICK_GRANT_MINUTES,
-          allowForfeit: false,
-          approvalForRequest: "admin",
-          approvalForLog: "none",
-          effectiveFrom: periodStart,
-        },
-      ]);
+      const createdPolicies = await tx
+        .insert(policies)
+        .values([
+          {
+            orgId: org.id,
+            leaveTypeId: vacationId,
+            name: DEMO_VACATION_POLICY_NAME,
+            grantMode: "periodic",
+            grantMinutes: DEMO_VACATION_GRANT_MINUTES,
+            periodicCadence: "monthly",
+            periodicMinutes: DEMO_VACATION_PERIODIC_MINUTES,
+            takeCeilingMinutes: DEMO_VACATION_TAKE_CEILING_MINUTES,
+            allowForfeit: false,
+            approvalForRequest: "admin",
+            approvalForLog: "none",
+            minIncrementMinutes: DEMO_MIN_INCREMENT_MINUTES,
+            effectiveFrom: periodStart,
+          },
+          {
+            orgId: org.id,
+            leaveTypeId: sickId,
+            name: DEMO_SICK_POLICY_NAME,
+            grantMode: "lump_sum",
+            grantMinutes: DEMO_SICK_GRANT_MINUTES,
+            takeCeilingMinutes: DEMO_SICK_GRANT_MINUTES,
+            allowForfeit: false,
+            approvalForRequest: "admin",
+            approvalForLog: "none",
+            effectiveFrom: periodStart,
+          },
+        ])
+        .returning({ id: policies.id, leaveTypeId: policies.leaveTypeId });
 
-      const authUserId = crypto.randomUUID();
-      const now = new Date();
-      await tx.insert(user).values({
-        id: authUserId,
-        name: "Admin",
-        email: adminEmail,
-        emailVerified: true,
-        createdAt: now,
-        updatedAt: now,
-      });
-      await tx.insert(account).values({
-        id: crypto.randomUUID(),
-        accountId: authUserId,
-        providerId: "credential",
-        userId: authUserId,
-        password: passwordHash,
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      await tx.insert(employees).values({
-        orgId: org.id,
-        email: adminEmail,
-        name: "Admin",
-        role: "admin",
-        startDate: today,
-        authUserId,
-        mustChangePassword: true,
-      });
+      for (const admin of admins) {
+        const employeeId = await insertPerson({
+          email: admin.email,
+          name: admin.name,
+          role: "admin",
+          password: adminPassword,
+        });
+        await tx.insert(policyAssignments).values(
+          createdPolicies.map((policy) => ({
+            employeeId,
+            policyId: policy.id,
+            leaveTypeId: policy.leaveTypeId,
+            validFrom: periodStart,
+          })),
+        );
+      }
 
       await tx.insert(policyPeriods).values([
         {
@@ -205,8 +281,8 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
     console.log(
       `Seeded org "${DEMO_ORG_NAME}" timezone=${timezone} year=${year} (open) year=${year + 1} (future)`,
     );
-    console.log("Assign policies, then first-year open the same year to grant Sick.");
-    console.log(`Seeded admin ${adminEmail} (must change password on first login)`);
+    console.log(`Assigned vacation + sick policies to ${admins.length} admin(s).`);
+    console.log(`Seeded admins ${admins.map((a) => a.email).join(", ")}`);
     console.log("No holiday rows seeded.");
   } finally {
     await client.end({ timeout: 5 });

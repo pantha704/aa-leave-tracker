@@ -35,6 +35,7 @@ export {
 export const emailAndPasswordConfig = {
   enabled: true,
   disableSignUp: true,
+  minPasswordLength: 6,
 } as const;
 
 export function sessionCookieAttributes(

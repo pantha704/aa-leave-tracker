@@ -25,7 +25,7 @@ export function ChangePasswordForm() {
           type="password"
           name="newPassword"
           autoComplete="new-password"
-          minLength={8}
+          minLength={6}
           required
         />
       </label>

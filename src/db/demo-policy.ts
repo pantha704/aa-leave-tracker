@@ -26,4 +26,8 @@ export const DEMO_VACATION_POLICY_NAME = "Vacation / Unpaid 17d monthly";
 export const DEMO_SICK_TYPE_CODE = "sick";
 export const DEMO_SICK_TYPE_NAME = "Sick";
 export const DEMO_SICK_POLICY_NAME = "Sick 3d allotment";
-export const DEMO_DEFAULT_ADMIN_EMAIL = "admin@absoluteaddiction.local";
+export const DEMO_DEFAULT_ADMIN_EMAIL = "preston@absoluteaddiction.com";
+export const DEMO_DEFAULT_OPERATORS = [
+  { email: "preston@absoluteaddiction.com", name: "Preston" },
+  { email: "das@absoluteaddiction.com", name: "Das" },
+] as const;

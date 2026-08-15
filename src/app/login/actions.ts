@@ -73,8 +73,8 @@ export async function changePasswordAction(
   if (!currentPassword || !newPassword) {
     return { error: "Current and new password are required" };
   }
-  if (newPassword.length < 8) {
-    return { error: "New password must be at least 8 characters" };
+  if (newPassword.length < 6) {
+    return { error: "New password must be at least 6 characters" };
   }
 
   const session = await getAuth().api.getSession({ headers: await headers() });

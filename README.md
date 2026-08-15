@@ -56,8 +56,8 @@ docker run --name aa-leave-postgres \
 Email + password via Better Auth. There is no public registration endpoint.
 
 - `BETTER_AUTH_SECRET` is required at runtime (not for `GET /api/health`).
-- Seed creates the admin employee and a credential. `SEED_ADMIN_PASSWORD` is required.
-- First admin login is forced through `/login/change-password`.
+- Seed creates admin employees and credentials (`preston@absoluteaddiction.com` and `das@absoluteaddiction.com` by default). `SEED_ADMIN_PASSWORD` is required and is never committed.
+- Invited employees with `must_change_password` are forced through `/login/change-password`. Seeded operators are not.
 - After login: admin → `/admin`, employee → `/me`.
 - Employees who `GET /admin` (including `/admin/holidays` and `/admin/leave-types`) receive **403** (not 404) from both the proxy and `authorizeAdmin` / `requireAdmin`.
 - Holidays start empty; import CSV (`date`, `name`, optional `region`). Unique per `(org, date, region)`. No holiday seed.

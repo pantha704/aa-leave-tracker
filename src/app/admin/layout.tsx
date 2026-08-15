@@ -3,6 +3,8 @@ import { countPendingEntries } from "@/server/admin/employees";
 import { requireAdmin } from "@/server/auth";
 import { getOrgSettings } from "@/server/settings";
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
   const { employee } = await requireAdmin();
   const [pendingCount, settings] = await Promise.all([

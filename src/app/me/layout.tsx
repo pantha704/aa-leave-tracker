@@ -2,6 +2,8 @@ import { OpsBanner } from "@/components/ops-banner";
 import { requireEmployee } from "@/server/auth";
 import { getOrgSettings } from "@/server/settings";
 
+export const dynamic = "force-dynamic";
+
 export default async function MeLayout({ children }: LayoutProps<"/me">) {
   const { employee } = await requireEmployee();
   const settings = await getOrgSettings(employee.orgId);

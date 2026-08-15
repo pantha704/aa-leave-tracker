@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { minutesToHours } from "@/server/admin/employees";
+import { formatHours } from "@/lib/hours";
 import {
   ENTRY_FIELDS,
   OPENING_FIELDS,
@@ -183,9 +183,9 @@ function DryRunPanel({ preview }: { preview: DryRunResult }) {
                 <tr key={`${row.line}-${row.email}`} className="border-b border-zinc-100 dark:border-zinc-900">
                   <td className="py-2 pr-4">{row.email}</td>
                   <td className="py-2 pr-4">{row.leaveType}</td>
-                  <td className="py-2 pr-4 font-mono">{minutesToHours(row.sheetRemainingMinutes)}</td>
-                  <td className="py-2 pr-4 font-mono">{minutesToHours(row.appRemainingMinutes)}</td>
-                  <td className="py-2 font-mono">{minutesToHours(row.deltaMinutes)}</td>
+                  <td className="py-2 pr-4 font-mono">{formatHours(row.sheetRemainingMinutes)}</td>
+                  <td className="py-2 pr-4 font-mono">{formatHours(row.appRemainingMinutes)}</td>
+                  <td className="py-2 font-mono">{formatHours(row.deltaMinutes)}</td>
                 </tr>
               ))}
             </tbody>

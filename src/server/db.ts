@@ -1,11 +1,9 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@/db/schema";
+import { getDatabaseUrl } from "./env";
 
-export function getDatabaseUrl(): string | undefined {
-  const url = process.env.DATABASE_URL?.trim();
-  return url && url.length > 0 ? url : undefined;
-}
+export { getDatabaseUrl };
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
 

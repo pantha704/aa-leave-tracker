@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { applyAuthGate } from "@/server/auth-gate";
-import { getRequestActor } from "@/server/auth";
 import { contentSecurityPolicy } from "@/server/csp";
 import { getSessionCookie } from "better-auth/cookies";
-import { getDatabaseUrl } from "@/server/db";
-import { defaultInviteDeps } from "@/server/invite";
-import { gateInvitePath } from "@/server/invite-http";
 
 function withCsp(response: NextResponse, nonce: string, csp: string) {
   response.headers.set("Content-Security-Policy", csp);
@@ -21,16 +17,12 @@ export async function proxy(request: NextRequest) {
   requestHeaders.set("Content-Security-Policy", csp);
   const nextRequest = new NextRequest(request, { headers: requestHeaders });
 
-  if (getDatabaseUrl()) {
-    const inviteRes = await gateInvitePath(nextRequest.nextUrl.pathname, defaultInviteDeps());
-    if (inviteRes) return withCsp(inviteRes, nonce, csp);
-  }
-
+  // Cookie-only anonymous gate. Role checks stay in pages so postgres stays off the Edge bundle.
   const sessionCookie = getSessionCookie(nextRequest);
-  const actor = sessionCookie
-    ? await getRequestActor(nextRequest)
-    : { kind: "anonymous" as const };
-  return withCsp(applyAuthGate(nextRequest, actor), nonce, csp);
+  if (sessionCookie) {
+    return withCsp(NextResponse.next({ request: { headers: requestHeaders } }), nonce, csp);
+  }
+  return withCsp(applyAuthGate(nextRequest, { kind: "anonymous" }), nonce, csp);
 }
 
 export const config = {

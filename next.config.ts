@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import { extraSecurityHeaders } from "./src/server/csp";
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["postgres"],
   experimental: {
     authInterrupts: true,
   },

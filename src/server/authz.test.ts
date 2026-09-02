@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canAdjustLedger,
   canAdmin,
+  canApproveLeave,
   canCancelEntry,
   canCreateEmployee,
   canReadEmployee,
@@ -10,6 +11,7 @@ import {
   type LeaveEntryAuthz,
   type PeriodGate,
 } from "./authz";
+import { ROLE_PERMISSIONS } from "./permissions";
 
 const alice: AuthzActor = { id: "alice", role: "employee" };
 const bob: AuthzActor = { id: "bob", role: "employee" };
@@ -132,5 +134,90 @@ describe("canCancelEntry", () => {
     const report = entry({ managerId: "mgr", status: "pending" });
     expect(canReadEmployee(manager, report.employeeId, { managerId: "mgr" })).toBe(true);
     expect(canCancelEntry(manager, report, open)).toBe(false);
+  });
+});
+
+function member(
+  id: string,
+  organizationId: string,
+  role: keyof typeof ROLE_PERMISSIONS,
+): AuthzActor {
+  return { id, organizationId, permissions: ROLE_PERMISSIONS[role] };
+}
+
+describe("multi-org membership authorization", () => {
+  const prestonA = member("preston-a", "org-a", "org_admin");
+  const prestonB = member("preston-b", "org-b", "employee");
+  const managerA = member("mgr-a", "org-a", "manager");
+  const report = {
+    employeeId: "report-a",
+    organizationId: "org-a",
+    managerId: "mgr-a",
+    status: "pending",
+    immutableAt: null,
+  };
+
+  it("allows the same identity admin capabilities in A and denies them in B", () => {
+    expect(canAdmin(prestonA)).toBe(true);
+    expect(canCreateEmployee(prestonA)).toBe(true);
+    expect(canAdjustLedger(prestonA)).toBe(true);
+    expect(canReadEmployee(prestonA, "anyone-a", { organizationId: "org-a" })).toBe(true);
+
+    expect(canAdmin(prestonB)).toBe(false);
+    expect(canCreateEmployee(prestonB)).toBe(false);
+    expect(canAdjustLedger(prestonB)).toBe(false);
+    expect(canReadEmployee(prestonB, "anyone-b", { organizationId: "org-b" })).toBe(false);
+    expect(canReadEmployee(prestonB, "preston-b", { organizationId: "org-b" })).toBe(true);
+  });
+
+  it("denies cross-org reads and mutations even when ids are guessed", () => {
+    expect(canReadEmployee(prestonA, "org-b-employee", { organizationId: "org-b" })).toBe(false);
+    expect(canReadEmployee(prestonB, "org-a-employee", { organizationId: "org-a" })).toBe(false);
+    expect(
+      canWriteEntry(prestonA, {
+        ...report,
+        employeeId: "org-b-employee",
+        organizationId: "org-b",
+      }),
+    ).toBe(false);
+    expect(canApproveLeave(prestonA, { ...report, organizationId: "org-b" })).toBe(false);
+    expect(canApproveLeave(managerA, { ...report, organizationId: "org-b" })).toBe(false);
+  });
+
+  it("lets a manager act only on current direct reports in that org", () => {
+    expect(canReadEmployee(managerA, "report-a", { organizationId: "org-a", managerId: "mgr-a" })).toBe(
+      true,
+    );
+    expect(canApproveLeave(managerA, report)).toBe(true);
+    expect(
+      canReadEmployee(managerA, "other-team", { organizationId: "org-a", managerId: "other-mgr" }),
+    ).toBe(false);
+    expect(canApproveLeave(managerA, { ...report, employeeId: "other-team", managerId: "other-mgr" })).toBe(
+      false,
+    );
+  });
+
+  it("never allows self-approval even with approve capability", () => {
+    const selfPending = {
+      employeeId: "mgr-a",
+      organizationId: "org-a",
+      managerId: "boss",
+      status: "pending",
+      immutableAt: null,
+    };
+    expect(canApproveLeave(managerA, selfPending)).toBe(false);
+    expect(canApproveLeave(prestonA, { ...selfPending, employeeId: "preston-a" })).toBe(false);
+    const hrSelf = member("hr-1", "org-a", "hr");
+    expect(canApproveLeave(hrSelf, { employeeId: "hr-1", organizationId: "org-a" })).toBe(false);
+    expect(canApproveLeave(hrSelf, { employeeId: "someone-else", organizationId: "org-a" })).toBe(
+      true,
+    );
+  });
+
+  it("denies a privileged actor from another org", () => {
+    const hrOther = member("hr-b", "org-b", "hr");
+    expect(canApproveLeave(hrOther, report)).toBe(false);
+    expect(canReadEmployee(hrOther, "report-a", { organizationId: "org-a" })).toBe(false);
+    expect(canAdjustLedger(hrOther)).toBe(false);
   });
 });

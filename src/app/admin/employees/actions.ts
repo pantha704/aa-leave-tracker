@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { assignEmployeePolicy, findLeaveEntryInOrg, postAdjustment } from "@/server/admin/employees";
 import { requireAdmin } from "@/server/auth";
+import { authzActorFromEmployee } from "@/server/authz";
 import { decideLeave, type DecideAction } from "@/server/leave/decide";
 import { terminateEmployee } from "@/server/terminate";
 
@@ -26,7 +27,7 @@ export async function adjustHoursAction(
   const { employee } = await requireAdmin();
   const employeeId = String(formData.get("employeeId") ?? "");
   const result = await postAdjustment({
-    actor: { id: employee.id, role: "admin" },
+    actor: authzActorFromEmployee(employee),
     orgId: employee.orgId,
     employeeId,
     raw: {
@@ -48,7 +49,7 @@ export async function assignPolicyAction(
   const { employee } = await requireAdmin();
   const employeeId = String(formData.get("employeeId") ?? "");
   const result = await assignEmployeePolicy({
-    actor: { id: employee.id, role: "admin" },
+    actor: authzActorFromEmployee(employee),
     orgId: employee.orgId,
     employeeId,
     raw: {
@@ -76,7 +77,7 @@ export async function decideEntryAction(
   if (!scoped) return { ok: false, error: "leave entry not found" };
 
   const result = await decideLeave({
-    actor: { id: employee.id, role: "admin" },
+    actor: authzActorFromEmployee(employee),
     entryId,
     action,
     adminNote: String(formData.get("adminNote") ?? "").trim() || undefined,
@@ -94,7 +95,7 @@ export async function terminateEmployeeAction(
   const { employee } = await requireAdmin();
   const employeeId = String(formData.get("employeeId") ?? "");
   const result = await terminateEmployee({
-    actor: { id: employee.id, role: "admin" },
+    actor: authzActorFromEmployee(employee),
     orgId: employee.orgId,
     employeeId,
     raw: {

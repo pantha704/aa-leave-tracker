@@ -34,6 +34,12 @@ import {
   policyTenureBands,
   yearEndSnapshots,
 } from "./schema";
+import {
+  membershipRoles,
+  organizationMemberships,
+  organizationRoles,
+  reportingRelationships,
+} from "./schema-membership";
 
 const tables = {
   organizations,
@@ -54,6 +60,10 @@ const tables = {
   policyPeriods,
   yearEndSnapshots,
   auditEvents,
+  organizationRoles,
+  organizationMemberships,
+  membershipRoles,
+  reportingRelationships,
 };
 
 describe("demo-policy DEMO constants", () => {
@@ -87,6 +97,10 @@ describe("normative schema", () => {
         "policyRules",
         "policyTenureBands",
         "yearEndSnapshots",
+        "organizationRoles",
+        "organizationMemberships",
+        "membershipRoles",
+        "reportingRelationships",
       ].sort(),
     );
     for (const [name, table] of Object.entries(tables)) {
@@ -172,5 +186,22 @@ describe("normative schema", () => {
     const cols = getTableColumns(employees);
     expect(cols.mustChangePassword.name).toBe("must_change_password");
     expect(cols.authUserId.name).toBe("auth_user_id");
+  });
+
+  it("commits a membership migration that lifts global auth-user uniqueness", () => {
+    const src = readFileSync(new URL("./migrations/0003_purple_jubilee.sql", import.meta.url), "utf8");
+    expect(src).toMatch(/DROP INDEX "employees_auth_user_id_unique"/);
+    expect(src).toMatch(/CREATE UNIQUE INDEX "employees_org_auth_user_unique"/);
+    expect(src).toMatch(/INSERT INTO "organization_memberships"/);
+    expect(src).toMatch(/INSERT INTO "reporting_relationships"/);
+  });
+
+  it("scopes auth user uniqueness per organization so one identity can join two orgs", () => {
+    const empIdx = getTableConfig(employees).indexes.map((i) => i.config.name);
+    expect(empIdx).toContain("employees_org_auth_user_unique");
+    expect(empIdx).not.toContain("employees_auth_user_id_unique");
+    const membershipIdx = getTableConfig(organizationMemberships).indexes.map((i) => i.config.name);
+    expect(membershipIdx).toContain("organization_memberships_org_auth_user");
+    expect(getTableColumns(organizations).slug.name).toBe("slug");
   });
 });

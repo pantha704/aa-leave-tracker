@@ -10,7 +10,7 @@ import {
   shiftYearMonth,
   type CalendarPerson,
 } from "@/server/calendar";
-import type { EmployeeRole } from "@/server/auth-gate";
+import { authzActorFromEmployee, canAdmin } from "@/server/authz";
 import { setTeamCalendarEnabledAction, setTeamCalendarShowTypeAction } from "./actions";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
@@ -37,7 +37,8 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
     ctx?.timezone ?? "UTC",
   );
 
-  const isAdmin = employee.role === "admin";
+  const actor = authzActorFromEmployee(employee);
+  const isAdmin = canAdmin(actor);
   const yearMonth = "error" in parsed ? null : parsed;
   const cells = yearMonth ? monthCells(yearMonth.year, yearMonth.month) : [];
   const from = cells[0]?.date;
@@ -46,7 +47,7 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
   const result =
     yearMonth && from && to
       ? await readTeamCalendar({
-          actor: { id: employee.id, role: employee.role as EmployeeRole },
+          actor,
           orgId: employee.orgId,
           from,
           to,

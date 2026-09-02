@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireEmployee } from "@/server/auth";
-import type { EmployeeRole } from "@/server/auth-gate";
+import { authzActorFromEmployee } from "@/server/authz";
 import { formatHours } from "@/lib/hours";
 import { ownSubmitPayload } from "@/lib/leave-fields";
 import { decideLeave } from "@/server/leave/decide";
@@ -21,7 +21,7 @@ export async function submitLeaveAction(
   formData: FormData,
 ): Promise<LeaveFormState> {
   const { employee } = await requireEmployee();
-  const actor = { id: employee.id, role: employee.role as EmployeeRole };
+  const actor = authzActorFromEmployee(employee);
   const fields = ownSubmitPayload(actor, formData);
 
   if (!fields.leaveTypeId) {
@@ -66,7 +66,7 @@ export async function cancelLeaveAction(
   }
 
   const result = await decideLeave({
-    actor: { id: employee.id, role: employee.role as EmployeeRole },
+    actor: authzActorFromEmployee(employee),
     entryId,
     action: "cancel",
   });

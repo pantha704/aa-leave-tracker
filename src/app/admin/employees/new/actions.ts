@@ -1,7 +1,7 @@
 "use server";
 
 import { requireAdmin } from "@/server/auth";
-import type { EmployeeRole } from "@/server/auth-gate";
+import { authzActorFromEmployee } from "@/server/authz";
 import { createEmployeeWithInvite, defaultInviteDeps, issueInvite } from "@/server/invite";
 
 export type CreateEmployeeState =
@@ -16,11 +16,7 @@ export async function createEmployeeAction(
   const { employee } = await requireAdmin();
   const result = await createEmployeeWithInvite(
     {
-      actor: {
-        id: employee.id,
-        role: employee.role as EmployeeRole,
-        orgId: employee.orgId,
-      },
+      actor: { ...authzActorFromEmployee(employee), orgId: employee.orgId },
       name: String(formData.get("name") ?? ""),
       email: String(formData.get("email") ?? ""),
       startDate: String(formData.get("startDate") ?? ""),
@@ -42,11 +38,7 @@ export async function reissueInviteAction(
   const { employee } = await requireAdmin();
   const result = await issueInvite(
     {
-      actor: {
-        id: employee.id,
-        role: employee.role as EmployeeRole,
-        orgId: employee.orgId,
-      },
+      actor: { ...authzActorFromEmployee(employee), orgId: employee.orgId },
       employeeId: String(formData.get("employeeId") ?? ""),
     },
     defaultInviteDeps(),

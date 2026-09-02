@@ -29,6 +29,12 @@ import {
   policyAssignments,
   policyPeriods,
 } from "./schema";
+import {
+  membershipRoles,
+  organizationMemberships,
+  organizationRoles,
+} from "./schema-membership";
+import { ROLE_PERMISSIONS, type RoleKey } from "../server/permissions";
 import { getDatabaseUrl } from "../server/db";
 
 type SeedEnv = Partial<Record<string, string | undefined>>;
@@ -135,7 +141,9 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
         .insert(organizations)
         .values({
           name: DEMO_ORG_NAME,
+          slug: "absolute-addiction",
           timezone,
+          locale: "en",
           standardWorkdayMinutes: DEMO_WORKDAY_MINUTES,
         })
         .returning({ id: organizations.id });
@@ -149,6 +157,32 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
         requestsEnabled: true,
         teamCalendarEnabled: false,
       });
+
+      const roleKeys: RoleKey[] = [
+        "employee",
+        "manager",
+        "hr",
+        "hr_admin",
+        "executive",
+        "org_admin",
+        "payroll_viewer",
+        "auditor",
+      ];
+      const createdRoles = await tx
+        .insert(organizationRoles)
+        .values(
+          roleKeys.map((key) => ({
+            orgId: org.id,
+            key,
+            name: key
+              .split("_")
+              .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+              .join(" "),
+            permissions: [...ROLE_PERMISSIONS[key]],
+          })),
+        )
+        .returning({ id: organizationRoles.id, key: organizationRoles.key });
+      const roleIdByKey = new Map(createdRoles.map((row) => [row.key, row.id]));
 
       async function insertPerson(opts: {
         email: string;
@@ -187,6 +221,22 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
             mustChangePassword: false,
           })
           .returning({ id: employees.id });
+        const [membership] = await tx
+          .insert(organizationMemberships)
+          .values({
+            orgId: org.id,
+            employeeId: person.id,
+            authUserId,
+          })
+          .returning({ id: organizationMemberships.id });
+        const roleKey: RoleKey = opts.role === "admin" ? "org_admin" : "employee";
+        const roleId = roleIdByKey.get(roleKey);
+        if (roleId) {
+          await tx.insert(membershipRoles).values({
+            membershipId: membership.id,
+            roleId,
+          });
+        }
         return person.id;
       }
 

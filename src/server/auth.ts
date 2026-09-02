@@ -17,6 +17,12 @@ import {
 } from "./auth-gate";
 import type { AuthzActor } from "./authz";
 import { getDatabaseUrl, getDb } from "./db";
+import {
+  employeesForAuthUser,
+  pickOrgId,
+  selectEmployeeForOrg,
+  toAuthzActor,
+} from "./membership";
 
 export {
   applyAuthGate,
@@ -91,43 +97,39 @@ export function getAuth(): AuthInstance {
   return authInstance;
 }
 
-function toAccess(employee: {
-  role: string;
-  mustChangePassword: boolean;
-  active: boolean;
-}): EmployeeAccess {
+function toAccess(
+  employee: {
+    role: string;
+    mustChangePassword: boolean;
+    active: boolean;
+  },
+  permissions?: EmployeeAccess["permissions"],
+): EmployeeAccess {
   return {
     role: employee.role as EmployeeRole,
+    permissions,
     mustChangePassword: employee.mustChangePassword,
     active: employee.active,
   };
 }
 
-export async function findEmployeeByUser(user: { id: string; email: string }) {
-  const db = getDb();
-  const [byAuthId] = await db
-    .select()
-    .from(employees)
-    .where(eq(employees.authUserId, user.id))
-    .limit(1);
-  if (byAuthId) return byAuthId;
+export async function findEmployeeByUser(
+  user: { id: string; email: string },
+  preferredOrgId?: string,
+) {
+  const rows = await employeesForAuthUser(user.id, user.email);
+  const match = selectEmployeeForOrg(rows, preferredOrgId);
+  if (!match) return undefined;
 
-  const [byEmail] = await db
-    .select()
-    .from(employees)
-    .where(eq(employees.email, user.email))
-    .limit(1);
-  if (!byEmail) return undefined;
-
-  if (!byEmail.authUserId) {
-    await db
+  if (!match.authUserId) {
+    await getDb()
       .update(employees)
       .set({ authUserId: user.id })
-      .where(eq(employees.id, byEmail.id));
-    return { ...byEmail, authUserId: user.id };
+      .where(eq(employees.id, match.id));
+    return { ...match, authUserId: user.id };
   }
 
-  return byEmail;
+  return match;
 }
 
 export async function getRequestActor(request: NextRequest): Promise<Actor> {
@@ -136,14 +138,16 @@ export async function getRequestActor(request: NextRequest): Promise<Actor> {
     return { kind: "anonymous" };
   }
 
-  const employee = await findEmployeeByUser(session.user);
+  const employee = await findEmployeeByUser(session.user, pickOrgId(request.headers));
   if (!employee?.active) {
     return { kind: "anonymous" };
   }
 
+  const actor = await toAuthzActor(employee);
   return {
     kind: "authenticated",
     role: employee.role as EmployeeRole,
+    permissions: actor.permissions,
     mustChangePassword: employee.mustChangePassword,
   };
 }
@@ -152,14 +156,11 @@ export async function getAuthzActor(request: NextRequest): Promise<AuthzActor | 
   const session = await getAuth().api.getSession({ headers: request.headers });
   if (!session?.user?.email) return null;
 
-  const employee = await findEmployeeByUser(session.user);
+  const employee = await findEmployeeByUser(session.user, pickOrgId(request.headers));
   if (!employee?.active) return null;
   if (mustChangePasswordNow(toAccess(employee))) return null;
 
-  return {
-    id: employee.id,
-    role: employee.role as EmployeeRole,
-  };
+  return toAuthzActor(employee);
 }
 
 export type RosterActor = AuthzActor & { orgId: string };
@@ -168,13 +169,13 @@ export async function getRosterActor(request: NextRequest): Promise<RosterActor 
   const session = await getAuth().api.getSession({ headers: request.headers });
   if (!session?.user?.email) return null;
 
-  const employee = await findEmployeeByUser(session.user);
+  const employee = await findEmployeeByUser(session.user, pickOrgId(request.headers));
   if (!employee?.active) return null;
   if (mustChangePasswordNow(toAccess(employee))) return null;
 
+  const actor = await toAuthzActor(employee);
   return {
-    id: employee.id,
-    role: employee.role as EmployeeRole,
+    ...actor,
     orgId: employee.orgId,
   };
 }
@@ -183,22 +184,24 @@ export async function requireNotMustChangePassword() {
   const sessionCookie = getSessionCookie(await headers());
   if (!sessionCookie) return;
 
-  const session = await getAuth().api.getSession({ headers: await headers() });
+  const requestHeaders = await headers();
+  const session = await getAuth().api.getSession({ headers: requestHeaders });
   if (!session?.user) return;
 
-  const employee = await findEmployeeByUser(session.user);
+  const employee = await findEmployeeByUser(session.user, pickOrgId(requestHeaders));
   if (mustChangePasswordNow(employee ? toAccess(employee) : null)) {
     redirect("/login/change-password");
   }
 }
 
 export async function requireEmployee() {
-  const session = await getAuth().api.getSession({ headers: await headers() });
+  const requestHeaders = await headers();
+  const session = await getAuth().api.getSession({ headers: requestHeaders });
   if (!session?.user) {
     redirect("/login");
   }
 
-  const employee = await findEmployeeByUser(session.user);
+  const employee = await findEmployeeByUser(session.user, pickOrgId(requestHeaders));
   if (!employee?.active) {
     redirect("/login");
   }
@@ -211,13 +214,17 @@ export async function requireEmployee() {
 }
 
 export async function requireAdmin() {
-  const session = await getAuth().api.getSession({ headers: await headers() });
+  const requestHeaders = await headers();
+  const session = await getAuth().api.getSession({ headers: requestHeaders });
   if (!session?.user) {
     redirect("/login");
   }
 
-  const employee = await findEmployeeByUser(session.user);
-  const decision = authorizeAdmin(employee ? toAccess(employee) : null);
+  const employee = await findEmployeeByUser(session.user, pickOrgId(requestHeaders));
+  const actor = employee ? await toAuthzActor(employee) : null;
+  const decision = authorizeAdmin(
+    employee ? toAccess(employee, actor?.permissions) : null,
+  );
   if (decision.status === "unauthenticated") {
     redirect("/login");
   }

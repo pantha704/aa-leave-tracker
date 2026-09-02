@@ -6,10 +6,11 @@ import {
   type AdminGateDeps,
 } from "@/server/admin-api";
 import { assignEmployeePolicy, type AdminFail, type FileAssignment } from "@/server/admin/employees";
+import type { AuthzActor } from "@/server/authz";
 
 export type AdminAssignDeps = AdminGateDeps & {
   assign: (input: {
-    actor: { id: string; role: "employee" | "manager" | "admin" };
+    actor: AuthzActor;
     orgId: string;
     employeeId: string;
     raw: unknown;

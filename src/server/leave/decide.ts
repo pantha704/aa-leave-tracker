@@ -1,7 +1,8 @@
 import { asAuditUuid, tryWriteAudit, writeAuditEvent, type AuditWriter } from "@/server/audit";
 import {
-  canAdmin,
+  canApproveLeave,
   canCancelEntry,
+  canOverridePolicy,
   type AuthzActor,
   type PeriodGate,
 } from "@/server/authz";
@@ -78,8 +79,12 @@ function periodGateFor(
   return { open, today };
 }
 
-function adminNoteFor(actor: AuthzActor, note: string | null | undefined): string | null | undefined {
-  if (!canAdmin(actor)) return undefined;
+function decisionCommentFor(
+  actor: AuthzActor,
+  entry: { employeeId: string; organizationId?: string; managerId?: string | null },
+  note: string | null | undefined,
+): string | null | undefined {
+  if (!canApproveLeave(actor, entry) && !canOverridePolicy(actor)) return undefined;
   return note;
 }
 
@@ -119,23 +124,19 @@ export async function decideLeave(
       const snap = loaded.snapshot;
       const today = options.today ?? snap.today;
       const period = periodGateFor(entry, days, snap.periodStatuses, today);
-      const adminNote = adminNoteFor(actor, input.adminNote);
+      const targetAuthz = {
+        employeeId: entry.employeeId,
+        status: entry.status,
+        immutableAt: entry.immutableAt,
+        startDate: entry.startDate,
+        managerId: entry.managerId ?? snap.employee.managerId,
+        organizationId: snap.employee.orgId ?? actor.organizationId,
+      };
+      const adminNote = decisionCommentFor(actor, targetAuthz, input.adminNote);
 
       if (input.action === "approve" || input.action === "reject") {
-        if (!canAdmin(actor)) return fail(403, "FORBIDDEN", "forbidden");
-      } else if (
-        !canCancelEntry(
-          actor,
-          {
-            employeeId: entry.employeeId,
-            status: entry.status,
-            immutableAt: entry.immutableAt,
-            startDate: entry.startDate,
-            managerId: entry.managerId ?? snap.employee.managerId,
-          },
-          period,
-        )
-      ) {
+        if (!canApproveLeave(actor, targetAuthz)) return fail(403, "FORBIDDEN", "forbidden");
+      } else if (!canCancelEntry(actor, targetAuthz, period)) {
         return fail(403, "FORBIDDEN", "forbidden");
       }
 
@@ -148,7 +149,7 @@ export async function decideLeave(
           entry,
           days,
           snap,
-          override: canAdmin(actor) && input.override === true,
+          override: canOverridePolicy(actor) && input.override === true,
         });
         if (frozen) return frozen;
 

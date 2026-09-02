@@ -54,6 +54,7 @@ describe.skipIf(!url)("ledger against Postgres", () => {
       .insert(organizations)
       .values({
         name: `ledger-test-${crypto.randomUUID()}`,
+        slug: `ledger-test-${crypto.randomUUID()}`,
         timezone: "America/Los_Angeles",
         standardWorkdayMinutes: DEMO_WORKDAY_MINUTES,
       })

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { canAccessAdminPortal, type Permission } from "./permissions";
 
 export type EmployeeRole = "employee" | "manager" | "admin";
 
@@ -7,11 +8,13 @@ export type Actor =
   | {
       kind: "authenticated";
       role: EmployeeRole;
+      permissions?: readonly Permission[];
       mustChangePassword: boolean;
     };
 
 export type EmployeeAccess = {
   role: EmployeeRole;
+  permissions?: readonly Permission[];
   mustChangePassword: boolean;
   active: boolean;
 };
@@ -24,6 +27,16 @@ export type AdminDecision =
 
 export function homeForRole(role: EmployeeRole): string {
   return role === "admin" ? "/admin" : "/me";
+}
+
+export function homeForActor(actor: {
+  role: EmployeeRole;
+  permissions?: readonly Permission[];
+}): string {
+  if (actor.permissions && actor.permissions.length > 0) {
+    return canAccessAdminPortal(actor) ? "/admin" : "/me";
+  }
+  return homeForRole(actor.role);
 }
 
 export function isAdminPath(pathname: string): boolean {
@@ -53,6 +66,10 @@ export function authorizeAdmin(employee: EmployeeAccess | null | undefined): Adm
   }
   if (employee.mustChangePassword) {
     return { status: "must_change_password" };
+  }
+  if (employee.permissions && employee.permissions.length > 0) {
+    if (!canAccessAdminPortal(employee)) return { status: "forbidden" };
+    return { status: "ok" };
   }
   if (employee.role !== "admin") {
     return { status: "forbidden" };
@@ -88,12 +105,12 @@ export function applyAuthGate(request: NextRequest, actor: Actor): NextResponse 
     return NextResponse.redirect(new URL("/login/change-password", request.url));
   }
 
-  if (isAdminPath(pathname) && actor.role !== "admin") {
+  if (isAdminPath(pathname) && !canAccessAdminPortal(actor) && actor.role !== "admin") {
     return new NextResponse("Forbidden", { status: 403 });
   }
 
   if ((isLogin || isChangePassword) && !actor.mustChangePassword) {
-    return NextResponse.redirect(new URL(homeForRole(actor.role), request.url));
+    return NextResponse.redirect(new URL(homeForActor(actor), request.url));
   }
 
   return NextResponse.next({ request: { headers: request.headers } });

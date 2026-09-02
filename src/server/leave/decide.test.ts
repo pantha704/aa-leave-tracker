@@ -4,6 +4,7 @@ import {
   DEMO_WORKDAY_MINUTES,
 } from "@/db/demo-policy";
 import type { AuthzActor } from "@/server/authz";
+import { ROLE_PERMISSIONS } from "@/server/permissions";
 import type { PolicySnapshot } from "@/server/policy/types";
 import { decideLeave, nextStatus } from "./decide";
 import { MemoryLeaveStore } from "./memory";
@@ -268,4 +269,60 @@ describe("decideLeave", () => {
     const again = await submitMonday(store);
     expect(again.ok).toBe(true);
   });
+
+  it("lets a manager approve a direct report and forbids self-approval and other orgs", async () => {
+    const store = world();
+    store.employee = { ...store.employee, orgId: "org-a", managerId: "mgr" };
+    const submitted = await submitMonday(store);
+    expect(submitted.ok).toBe(true);
+    if (!submitted.ok) return;
+
+    const manager: AuthzActor = {
+      id: "mgr",
+      organizationId: "org-a",
+      permissions: ROLE_PERMISSIONS.manager,
+    };
+    const approved = await decideLeave(
+      { actor: manager, entryId: submitted.entry.id, action: "approve" },
+      { store, writeAudit: async () => undefined },
+    );
+    expect(approved.ok).toBe(true);
+
+    const store2 = world();
+    store2.employee = { ...store2.employee, orgId: "org-a", managerId: "mgr" };
+    const second = await submitMonday(store2);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    const self: AuthzActor = {
+      id: "alice",
+      organizationId: "org-a",
+      permissions: ROLE_PERMISSIONS.org_admin,
+    };
+    const selfDenied = await decideLeave(
+      { actor: self, entryId: second.entry.id, action: "approve" },
+      { store: store2, writeAudit: async () => undefined },
+    );
+    expect(selfDenied).toMatchObject({ ok: false, status: 403 });
+
+    const otherTeam = await decideLeave(
+      {
+        actor: { id: "other-mgr", organizationId: "org-a", permissions: ROLE_PERMISSIONS.manager },
+        entryId: second.entry.id,
+        action: "approve",
+      },
+      { store: store2, writeAudit: async () => undefined },
+    );
+    expect(otherTeam).toMatchObject({ ok: false, status: 403 });
+
+    const otherOrg = await decideLeave(
+      {
+        actor: { id: "hr-b", organizationId: "org-b", permissions: ROLE_PERMISSIONS.hr },
+        entryId: second.entry.id,
+        action: "approve",
+      },
+      { store: store2, writeAudit: async () => undefined },
+    );
+    expect(otherOrg).toMatchObject({ ok: false, status: 403 });
+  });
 });
+

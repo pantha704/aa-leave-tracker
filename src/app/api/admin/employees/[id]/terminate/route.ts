@@ -7,10 +7,11 @@ import {
 } from "@/server/admin-api";
 import type { AdminFail } from "@/server/admin/employees";
 import { terminateEmployee, type TerminateResult } from "@/server/terminate";
+import type { AuthzActor } from "@/server/authz";
 
 export type AdminTerminateDeps = AdminGateDeps & {
   terminate: (input: {
-    actor: { id: string; role: "employee" | "manager" | "admin" };
+    actor: AuthzActor;
     orgId: string;
     employeeId: string;
     raw: unknown;

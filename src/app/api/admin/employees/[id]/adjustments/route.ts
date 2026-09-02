@@ -6,11 +6,12 @@ import {
   type AdminGateDeps,
 } from "@/server/admin-api";
 import { postAdjustment, type AdminFail } from "@/server/admin/employees";
+import type { AuthzActor } from "@/server/authz";
 import type { LedgerRow } from "@/server/ledger/post";
 
 export type AdminAdjustDeps = AdminGateDeps & {
   postAdjustment: (input: {
-    actor: { id: string; role: "employee" | "manager" | "admin" };
+    actor: AuthzActor;
     orgId: string;
     employeeId: string;
     raw: unknown;

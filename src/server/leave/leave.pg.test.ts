@@ -58,6 +58,7 @@ describe.skipIf(!url)("leave submit against Postgres", () => {
       .insert(organizations)
       .values({
         name: `leave-test-${crypto.randomUUID()}`,
+        slug: `leave-test-${crypto.randomUUID()}`,
         timezone: "UTC",
         standardWorkdayMinutes: DEMO_WORKDAY_MINUTES,
       })

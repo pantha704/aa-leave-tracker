@@ -62,6 +62,7 @@ describe.skipIf(!url)("terminate against Postgres", () => {
       .insert(organizations)
       .values({
         name: `term-test-${crypto.randomUUID()}`,
+        slug: `term-test-${crypto.randomUUID()}`,
         timezone: "UTC",
         standardWorkdayMinutes: DEMO_WORKDAY_MINUTES,
       })

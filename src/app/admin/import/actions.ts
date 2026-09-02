@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/server/auth";
+import { authzActorFromEmployee } from "@/server/authz";
 import type { ColumnMap, ImportKind } from "@/server/import/csv";
 import { parseCsvRecords } from "@/server/holidays/csv";
 import {
@@ -127,7 +128,7 @@ export async function commitImportAction(
   const result = await commitImport(
     {
       orgId: employee.orgId,
-      actor: { id: employee.id, role: "admin" },
+      actor: authzActorFromEmployee(employee),
       kind,
       csv,
       map: mapFromForm(formData, kind),
@@ -166,7 +167,7 @@ export async function reverseImportAction(
   const batchId = String(formData.get("batchId") ?? "");
   if (!batchId) return { ok: false, error: "import batch is required" };
   const result = await reverseImportBatch(
-    { orgId: employee.orgId, batchId, actor: { id: employee.id, role: "admin" } },
+    { orgId: employee.orgId, batchId, actor: authzActorFromEmployee(employee) },
     dbImportStore,
   );
   if (!result.ok) return { ok: false, error: result.error };

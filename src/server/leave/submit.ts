@@ -104,6 +104,7 @@ export type LeaveDayRecord = {
 export type SubmitSnapshot = {
   employee: {
     id: string;
+    orgId?: string;
     startDate: string;
     workdayMinutes: number | null;
     role: string;
@@ -880,6 +881,7 @@ export const dbLeaveStore: LeaveStore = {
       snapshot: {
         employee: {
           id: emp.id,
+          orgId: emp.orgId,
           startDate: emp.startDate,
           workdayMinutes: emp.workdayMinutes,
           role: emp.role,

@@ -36,7 +36,9 @@ export const organizations = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     name: text("name").notNull(),
+    slug: text("slug").notNull(),
     timezone: text("timezone").notNull(),
+    locale: text("locale").notNull().default("en"),
     standardWorkdayMinutes: integer("standard_workday_minutes").notNull(),
     weekendDays: integer("weekend_days")
       .array()
@@ -46,9 +48,14 @@ export const organizations = pgTable(
     yearAnchor: text("year_anchor").notNull().default("calendar"),
     editWindowDays: integer("edit_window_days").notNull().default(7),
     forceExplicitType: boolean("force_explicit_type").notNull().default(true),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (t) => [
+    unique("organizations_slug_unique").on(t.slug),
     check("organizations_timezone_nonempty", sql`${t.timezone} <> ''`),
+    check("organizations_slug_nonempty", sql`${t.slug} <> ''`),
     check("organizations_workday_positive", sql`${t.standardWorkdayMinutes} > 0`),
   ],
 );
@@ -87,7 +94,9 @@ export const employees = pgTable(
   },
   (t) => [
     unique("employees_org_id_email_unique").on(t.orgId, t.email),
-    uniqueIndex("employees_auth_user_id_unique").on(t.authUserId),
+    uniqueIndex("employees_org_auth_user_unique")
+      .on(t.orgId, t.authUserId)
+      .where(sql`${t.authUserId} IS NOT NULL`),
     check("employees_role_check", sql`${t.role} IN ('employee','manager','admin')`),
   ],
 );

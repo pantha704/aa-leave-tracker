@@ -25,3 +25,7 @@ export function isInvalidDate(err: unknown): boolean {
   const code = pgErrorCode(err);
   return code === "22007" || code === "22008";
 }
+
+export function isUndefinedTable(err: unknown): boolean {
+  return pgErrorCode(err) === "42P01";
+}

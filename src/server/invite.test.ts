@@ -18,6 +18,10 @@ import {
   type RosterActor,
 } from "./invite";
 import { gateInvitePath, inviteTokenFromPath } from "./invite-http";
+import {
+  attachInviteMembership,
+  type MembershipWriter,
+} from "./membership";
 
 const admin: RosterActor = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -36,6 +40,40 @@ function memoryInvite(now = new Date("2026-03-15T12:00:00.000Z"), rawToken = "ra
   const credentials: { authUserId: string; email: string; passwordHash: string }[] = [];
   const events: AuditEventInput[] = [];
   const hooks = { failInvite: false };
+  const roles = new Map<string, string>();
+  const memberships: {
+    id: string;
+    orgId: string;
+    employeeId: string;
+    authUserId: string | null;
+    roleKey: string;
+  }[] = [];
+
+  const writer: MembershipWriter = {
+    async findRoleId(orgId, key) {
+      const mapKey = `${orgId}:${key}`;
+      const existing = roles.get(mapKey);
+      if (existing) return existing;
+      const id = crypto.randomUUID();
+      roles.set(mapKey, id);
+      return id;
+    },
+    async insertMembership(row) {
+      const created = { id: crypto.randomUUID(), ...row };
+      memberships.push({ ...created, roleKey: "" });
+      return { id: created.id };
+    },
+    async insertMembershipRole(row) {
+      const membership = memberships.find((item) => item.id === row.membershipId);
+      const roleEntry = [...roles.entries()].find(([, id]) => id === row.roleId);
+      if (membership && roleEntry) membership.roleKey = roleEntry[0].split(":")[1] ?? "";
+    },
+    async setMembershipAuthUser(employeeId, authUserId) {
+      for (const membership of memberships) {
+        if (membership.employeeId === employeeId) membership.authUserId = authUserId;
+      }
+    },
+  };
 
   const store: InviteStore = {
     async insertEmployeeWithInvite(input) {
@@ -59,6 +97,12 @@ function memoryInvite(now = new Date("2026-03-15T12:00:00.000Z"), rawToken = "ra
         employees.delete(rec.id);
         throw new Error("invite write failed");
       }
+      await attachInviteMembership(writer, {
+        orgId: input.employee.orgId,
+        employeeId: rec.id,
+        role: input.employee.role,
+        authUserId: null,
+      });
       const invite: InviteRecord = {
         id: crypto.randomUUID(),
         employeeId: rec.id,
@@ -106,6 +150,7 @@ function memoryInvite(now = new Date("2026-03-15T12:00:00.000Z"), rawToken = "ra
       invite.acceptedAt = input.acceptedAt;
       emp.authUserId = authUserId;
       emp.mustChangePassword = false;
+      await writer.setMembershipAuthUser(input.employeeId, authUserId);
       credentials.push({ authUserId, email: input.email, passwordHash: input.passwordHash });
       return { authUserId };
     },
@@ -123,7 +168,7 @@ function memoryInvite(now = new Date("2026-03-15T12:00:00.000Z"), rawToken = "ra
     store,
   };
 
-  return { employees, invites, credentials, events, deps, clock, hooks, tokens };
+  return { employees, invites, credentials, events, deps, clock, hooks, tokens, memberships };
 }
 
 describe("hashInviteToken", () => {
@@ -308,6 +353,38 @@ describe("acceptInvite", () => {
       { authUserId: emp.authUserId, email: "sam@example.com", passwordHash: "correct-horse" },
     ]);
     expect(mem.events.some((e) => e.action === "invite.accepted")).toBe(true);
+    expect(mem.memberships).toEqual([
+      expect.objectContaining({
+        employeeId: emp.id,
+        orgId: admin.orgId,
+        roleKey: "employee",
+        authUserId: emp.authUserId,
+      }),
+    ]);
+  });
+
+  it("writes membership and org role on invite insert", async () => {
+    const mem = memoryInvite();
+    const created = await createEmployeeWithInvite(
+      {
+        actor: admin,
+        name: "Sam Hire",
+        email: "sam@example.com",
+        startDate: "2026-04-01",
+        role: "manager",
+      },
+      mem.deps,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(mem.memberships).toEqual([
+      expect.objectContaining({
+        employeeId: created.employeeId,
+        orgId: admin.orgId,
+        roleKey: "manager",
+        authUserId: null,
+      }),
+    ]);
   });
 
   it("hashes the password before the accept write", async () => {

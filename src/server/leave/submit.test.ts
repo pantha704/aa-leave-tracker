@@ -4,6 +4,7 @@ import {
   DEMO_WORKDAY_MINUTES,
 } from "@/db/demo-policy";
 import type { AuthzActor } from "@/server/authz";
+import { ROLE_PERMISSIONS } from "@/server/permissions";
 import type { PolicySnapshot } from "@/server/policy/types";
 import { MemoryLeaveStore } from "./memory";
 import {
@@ -175,6 +176,29 @@ describe("submitLeave", () => {
   it("lets admin submit on behalf", async () => {
     const result = await submit(world(), { actor: admin });
     expect(result.ok).toBe(true);
+  });
+
+  it("forbids an org-A admin from submitting for a guessed org-B employee", async () => {
+    const store = world({
+      employee: {
+        id: "alice",
+        orgId: "org-b",
+        startDate: "2020-01-01",
+        workdayMinutes: DEMO_WORKDAY_MINUTES,
+        role: "employee",
+        managerId: null,
+        orgWorkdayMinutes: DEMO_WORKDAY_MINUTES,
+        weekendDays: [6, 7],
+        timezone: "UTC",
+      },
+    });
+    const orgAAdmin: AuthzActor = {
+      id: "admin-a",
+      organizationId: "org-a",
+      permissions: ROLE_PERMISSIONS.org_admin,
+    };
+    const result = await submit(store, { actor: orgAAdmin });
+    expect(result).toMatchObject({ ok: false, status: 403 });
   });
 
   it("does not treat a client today field as the org clock", async () => {

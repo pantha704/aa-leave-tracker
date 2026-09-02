@@ -272,8 +272,8 @@ describe("decideLeave", () => {
 
   it("lets a manager approve a direct report and forbids self-approval and other orgs", async () => {
     const store = world();
-    store.employee = { ...store.employee, orgId: "org-a", managerId: "mgr" };
     const submitted = await submitMonday(store);
+    store.employee = { ...store.employee, orgId: "org-a", managerId: "mgr" };
     expect(submitted.ok).toBe(true);
     if (!submitted.ok) return;
 
@@ -289,8 +289,8 @@ describe("decideLeave", () => {
     expect(approved.ok).toBe(true);
 
     const store2 = world();
-    store2.employee = { ...store2.employee, orgId: "org-a", managerId: "mgr" };
     const second = await submitMonday(store2);
+    store2.employee = { ...store2.employee, orgId: "org-a", managerId: "mgr" };
     expect(second.ok).toBe(true);
     if (!second.ok) return;
     const self: AuthzActor = {

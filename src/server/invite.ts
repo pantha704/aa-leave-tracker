@@ -6,6 +6,7 @@ import { tryWriteAudit, writeAuditEvent, type AuditWriter } from "./audit";
 import type { EmployeeRole } from "./auth-gate";
 import { canCreateEmployee, type AuthzActor } from "./authz";
 import { getDb } from "./db";
+import { attachInviteMembership, pgMembershipWriter } from "./membership";
 
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -179,6 +180,12 @@ export function pgInviteStore(db: ReturnType<typeof getDb> = getDb()): InviteSto
               createdBy: input.invite.createdBy,
             })
             .returning();
+          await attachInviteMembership(pgMembershipWriter(tx), {
+            orgId: input.employee.orgId,
+            employeeId: employee.id,
+            role: input.employee.role,
+            authUserId: null,
+          });
           return { employee, invite };
         });
       } catch (err) {
@@ -254,6 +261,7 @@ export function pgInviteStore(db: ReturnType<typeof getDb> = getDb()): InviteSto
           .update(employees)
           .set({ authUserId, mustChangePassword: false })
           .where(eq(employees.id, input.employeeId));
+        await pgMembershipWriter(tx).setMembershipAuthUser(input.employeeId, authUserId);
         return { authUserId };
       });
     },

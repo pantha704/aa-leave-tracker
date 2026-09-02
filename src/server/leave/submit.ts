@@ -432,8 +432,12 @@ export function gateOrgWrites(
   return null;
 }
 
-function canSubmitFor(actor: AuthzActor, employeeId: string, managerId?: string | null): boolean {
-  if (!canReadEmployee(actor, employeeId, { managerId })) return false;
+function canSubmitFor(
+  actor: AuthzActor,
+  employeeId: string,
+  target?: { managerId?: string | null; organizationId?: string },
+): boolean {
+  if (!canReadEmployee(actor, employeeId, target)) return false;
   return canAdmin(actor) || actor.id === employeeId;
 }
 
@@ -494,7 +498,12 @@ export async function submitLeave(
       }
       if (!loaded.ok) return fail(404, "NOT_FOUND", "employee or leave type not found");
       const snap = loaded.snapshot;
-      if (!canSubmitFor(actor, input.employeeId, snap.employee.managerId)) {
+      if (
+        !canSubmitFor(actor, input.employeeId, {
+          managerId: snap.employee.managerId,
+          organizationId: snap.employee.orgId,
+        })
+      ) {
         return fail(403, "FORBIDDEN", "forbidden");
       }
 

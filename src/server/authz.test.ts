@@ -37,6 +37,18 @@ describe("canAdmin / canAdjustLedger", () => {
     expect(canAdjustLedger(alice)).toBe(false);
     expect(canAdjustLedger(undefined)).toBe(false);
   });
+
+  it("does not grant org-admin capability from a legacy role when membership permissions are empty", () => {
+    const emptyMembership: AuthzActor = {
+      id: "admin",
+      role: "admin",
+      organizationId: "org-a",
+      permissions: [],
+    };
+    expect(canAdmin(emptyMembership)).toBe(false);
+    expect(canCreateEmployee(emptyMembership)).toBe(false);
+    expect(canAdjustLedger(emptyMembership)).toBe(false);
+  });
 });
 
 describe("canCreateEmployee", () => {

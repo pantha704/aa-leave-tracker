@@ -55,6 +55,10 @@ import {
   tryNotifyLeavePending,
   type PendingLeaveEntryNotice,
 } from "@/server/notify";
+import { enqueueProcessOutbox } from "@/server/notify-outbox";
+import { pendingNotifyRoles } from "@/server/notify-route";
+import { sickDocumentationMayBeRequired } from "@/server/policy/rules/abs-leave-types";
+import { defaultLeaveTypeCode, requiredApprovalStages } from "./workflow";
 import { expandToLeaveDays } from "./expand";
 
 const DECIMAL_HOURS = /^-?\d+(\.\d+)?$/;
@@ -88,6 +92,8 @@ export type LeaveEntryRecord = {
   createdAt: Date;
   updatedAt: Date;
   managerId?: string | null;
+  approvalStage?: string | null;
+  documentationMayBeRequired?: boolean;
 };
 
 export type LeaveDayRecord = {
@@ -112,9 +118,13 @@ export type SubmitSnapshot = {
     orgWorkdayMinutes: number;
     weekendDays: number[];
     timezone: string;
+    probationEndDate?: string | null;
+    noticePeriodStartDate?: string | null;
   };
+  ptoAvailableMinutes?: number;
   leaveType: {
     id: string;
+    code?: string;
     consumesBalance: boolean;
     unlimited: boolean;
     minIncrementMinutes: number | null;
@@ -160,6 +170,7 @@ export type LeaveStore = {
       updatedBy: string;
       updatedAt: Date;
       adminNote?: string | null;
+      approvalStage?: string | null;
     },
   ) => Promise<void>;
   deactivateDays: (leaveEntryId: string) => Promise<void>;
@@ -189,6 +200,8 @@ export type SubmitLeaveInput = {
   customHours?: string | number | null;
   note?: string | null;
   override?: boolean;
+  noticeException?: "emergency" | "medical" | null;
+  qualifyingCondition?: string | null;
 };
 
 export type SubmitLeaveSuccess = {
@@ -536,6 +549,8 @@ export async function submitLeave(
             startDate: snap.employee.startDate,
             workdayMinutes: snap.employee.workdayMinutes,
             role: snap.employee.role,
+            probationEndDate: snap.employee.probationEndDate,
+            noticePeriodStartDate: snap.employee.noticePeriodStartDate,
           },
           entry: {
             startDate: input.startDate,
@@ -546,11 +561,15 @@ export async function submitLeave(
             consumesBalance: snap.leaveType.consumesBalance,
             unlimited: snap.leaveType.unlimited,
           },
+          leaveTypeCode: defaultLeaveTypeCode(snap.leaveType.code),
+          ptoAvailableMinutes: snap.ptoAvailableMinutes,
+          qualifyingCondition: input.qualifyingCondition ?? input.note,
           policy: {
             ...policy,
             takeCeilingMinutes: null,
             negativeAllowed: true,
             negativeFloorMinutes: null,
+            noticeException: input.noticeException,
           },
           balance: snap.balance,
           holidays: snap.holidays,
@@ -580,6 +599,12 @@ export async function submitLeave(
       });
 
       const entryId = crypto.randomUUID();
+      const leaveTypeCode = defaultLeaveTypeCode(snap.leaveType.code);
+      const stages = requiredApprovalStages({
+        leaveTypeCode,
+        startDate: requireIsoDate(input.startDate, "startDate"),
+        endDate: requireIsoDate(input.endDate, "endDate"),
+      });
       const entry: LeaveEntryRecord = {
         id: entryId,
         employeeId: input.employeeId,
@@ -599,6 +624,11 @@ export async function submitLeave(
         createdAt: now,
         updatedAt: now,
         managerId: snap.employee.managerId,
+        approvalStage: evaluation.newStatus === "pending" ? (stages[0] ?? "manager") : "done",
+        documentationMayBeRequired: sickDocumentationMayBeRequired({
+          leaveTypeCode,
+          workdayCount: drafts.filter((day) => day.slotActive && day.minutes > 0).length,
+        }),
       };
       const days: LeaveDayRecord[] = drafts.map((day) => ({
         id: crypto.randomUUID(),
@@ -652,6 +682,17 @@ export async function submitLeave(
       };
     });
     if (result.ok && result.entry.status === "pending") {
+      enqueueProcessOutbox({
+        organizationId: actor.organizationId ?? "",
+        kind: "leave.pending",
+        sourceId: result.entry.id,
+        payload: {
+          employeeId: result.entry.employeeId,
+          startDate: result.entry.startDate,
+          endDate: result.entry.endDate,
+          recipients: pendingNotifyRoles(result.entry.approvalStage),
+        },
+      });
       await tryNotifyLeavePending(options.notify ?? notifyPendingLeaveEntry, {
         employeeId: result.entry.employeeId,
         leaveTypeId: result.entry.leaveTypeId,
@@ -725,6 +766,8 @@ function toEntryRecord(
     totalMinutes: row.totalMinutes,
     note: row.note,
     adminNote: row.adminNote,
+    approvalStage: row.approvalStage,
+    documentationMayBeRequired: row.documentationMayBeRequired,
     createdBy: row.createdBy,
     updatedBy: row.updatedBy,
     createdAt: row.createdAt,
@@ -761,6 +804,8 @@ export const dbLeaveStore: LeaveStore = {
         workdayMinutes: employees.workdayMinutes,
         role: employees.role,
         managerId: employees.managerId,
+        probationEndDate: employees.probationEndDate,
+        noticePeriodStartDate: employees.noticePeriodStartDate,
         timezone: organizations.timezone,
         orgWorkdayMinutes: organizations.standardWorkdayMinutes,
         weekendDays: organizations.weekendDays,
@@ -775,6 +820,7 @@ export const dbLeaveStore: LeaveStore = {
     const typeRows = await db
       .select({
         id: leaveTypes.id,
+        code: leaveTypes.code,
         consumesBalance: leaveTypes.consumesBalance,
         unlimited: leaveTypes.unlimited,
         minIncrementMinutes: leaveTypes.minIncrementMinutes,
@@ -872,6 +918,24 @@ export const dbLeaveStore: LeaveStore = {
       asOf: today,
       timeZone: emp.timezone,
     });
+    let ptoAvailableMinutes: number | undefined;
+    if (leaveType.code === "lwop") {
+      const ptoRows = await db
+        .select({ id: leaveTypes.id })
+        .from(leaveTypes)
+        .where(and(eq(leaveTypes.orgId, emp.orgId), eq(leaveTypes.code, "pto")))
+        .limit(1);
+      const ptoId = ptoRows[0]?.id;
+      if (ptoId) {
+        const ptoBalance = await getBalance(db, {
+          employeeId: input.employeeId,
+          leaveTypeId: ptoId,
+          asOf: today,
+          timeZone: emp.timezone,
+        });
+        ptoAvailableMinutes = ptoBalance.availableMinutes;
+      }
+    }
 
     const approvalForRequest =
       policyRow.approvalForRequest === "none" ||
@@ -899,6 +963,8 @@ export const dbLeaveStore: LeaveStore = {
           orgWorkdayMinutes: emp.orgWorkdayMinutes,
           weekendDays: emp.weekendDays,
           timezone: emp.timezone,
+          probationEndDate: emp.probationEndDate,
+          noticePeriodStartDate: emp.noticePeriodStartDate,
         },
         leaveType,
         policy: {
@@ -920,6 +986,7 @@ export const dbLeaveStore: LeaveStore = {
         periodStatuses: periodRows,
         today,
         balance,
+        ptoAvailableMinutes,
         orgSettings: {
           appReadonly: settings?.appReadonly ?? false,
           selfLogEnabled: settings?.selfLogEnabled ?? true,
@@ -954,6 +1021,8 @@ export const dbLeaveStore: LeaveStore = {
       totalMinutes: entry.totalMinutes,
       note: entry.note,
       adminNote: entry.adminNote,
+      approvalStage: entry.approvalStage,
+      documentationMayBeRequired: entry.documentationMayBeRequired ?? false,
       createdBy: entry.createdBy,
       updatedBy: entry.updatedBy,
       createdAt: entry.createdAt,
@@ -1001,6 +1070,7 @@ export const dbLeaveStore: LeaveStore = {
         updatedBy: patch.updatedBy,
         updatedAt: patch.updatedAt,
         ...(patch.adminNote !== undefined ? { adminNote: patch.adminNote } : {}),
+        ...(patch.approvalStage !== undefined ? { approvalStage: patch.approvalStage } : {}),
       })
       .where(eq(leaveEntries.id, id));
   },

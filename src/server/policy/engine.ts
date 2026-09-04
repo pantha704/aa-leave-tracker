@@ -8,6 +8,8 @@ import { spanCrossesToday } from "./rules/span-crosses-today";
 import { takeCeiling } from "./rules/take-ceiling";
 import { waitingPeriod } from "./rules/waiting-period";
 import { noticePeriod } from "./rules/notice-period";
+import { employmentNoticeRestriction, probationRestriction } from "./rules/abs-employment";
+import { consecutivePtoLimit, lwopEligibility } from "./rules/abs-leave-types";
 import { type Evaluation, type EvaluateLeaveInput, type Intent, type LeaveStatus } from "./types";
 
 export type {
@@ -90,6 +92,41 @@ export function evaluateLeave(input: EvaluateLeaveInput): Evaluation {
     exception: input.policy.noticeException,
   });
   if (notice) return notice;
+
+  const probation = probationRestriction({
+    startDate,
+    endDate,
+    today,
+    leaveTypeCode: input.leaveTypeCode,
+    probationEndDate: input.employee.probationEndDate,
+    override: input.override === true,
+    noticeException: input.policy.noticeException,
+  });
+  if (probation) return probation;
+
+  const employmentNotice = employmentNoticeRestriction({
+    startDate,
+    leaveTypeCode: input.leaveTypeCode,
+    noticePeriodStartDate: input.employee.noticePeriodStartDate,
+    override: input.override === true,
+  });
+  if (employmentNotice) return employmentNotice;
+
+  const consecutive = consecutivePtoLimit({
+    startDate,
+    endDate,
+    leaveTypeCode: input.leaveTypeCode,
+    override: input.override === true,
+  });
+  if (consecutive) return consecutive;
+
+  const lwop = lwopEligibility({
+    leaveTypeCode: input.leaveTypeCode,
+    ptoAvailableMinutes: input.ptoAvailableMinutes,
+    qualifyingCondition: input.qualifyingCondition,
+    override: input.override === true,
+  });
+  if (lwop) return lwop;
 
   const days = expandProposedDays(input.entry, {
     consumesBalance,

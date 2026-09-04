@@ -31,6 +31,10 @@ export const DEMO_SICK_POLICY_NAME = "Sick 3d allotment";
 export const DEMO_LWOP_TYPE_CODE = "lwop";
 export const DEMO_LWOP_TYPE_NAME = "Leave Without Pay";
 export const DEMO_LWOP_POLICY_NAME = "LWOP unpaid";
+/** PTO-012: parental types exist; production enablement stays gated. */
+export const DEMO_MATERNITY_TYPE_CODE = "maternity";
+export const DEMO_PATERNITY_TYPE_CODE = "paternity";
+export const PARENTAL_LEAVE_PRODUCTION_ENABLED = false;
 export const DEMO_PTO_CARRYOVER_MINUTES = 10 * DEMO_WORKDAY_MINUTES; // 4800
 export const DEMO_NOTICE_CALENDAR_DAYS = 14;
 export const DEMO_DEFAULT_ADMIN_EMAIL = "preston@absoluteaddiction.com";

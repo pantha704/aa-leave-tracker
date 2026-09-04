@@ -336,5 +336,112 @@ describe("decideLeave", () => {
     );
     expect(otherOrg).toMatchObject({ ok: false, status: 403 });
   });
+
+  it("keeps extended PTO pending until executive approves after manager", async () => {
+    const store = world();
+    store.leaveType = { ...store.leaveType, code: "pto" };
+    const submitted = await submitLeave(
+      {
+        actor: alice,
+        employeeId: store.employee.id,
+        leaveTypeId: store.leaveType.id,
+        startDate: "2026-07-06",
+        endDate: "2026-07-22",
+        portion: "full",
+      },
+      { store, writeAudit: async () => undefined, notify: async () => undefined },
+    );
+    expect(submitted.ok).toBe(true);
+    if (!submitted.ok) return;
+    store.employee = { ...store.employee, orgId: "org-a", managerId: "mgr" };
+    expect(submitted.entry.approvalStage).toBe("manager");
+
+    const manager: AuthzActor = {
+      id: "mgr",
+      organizationId: "org-a",
+      permissions: ROLE_PERMISSIONS.manager,
+    };
+    const stepped = await decideLeave(
+      { actor: manager, entryId: submitted.entry.id, action: "approve" },
+      { store, writeAudit: async () => undefined },
+    );
+    expect(stepped.ok).toBe(true);
+    if (!stepped.ok) return;
+    expect(stepped.entry.status).toBe("pending");
+    expect(stepped.entry.approvalStage).toBe("executive");
+    expect(stepped.ledgerPosted).toBe(false);
+
+    const execDeniedAsHr = await decideLeave(
+      {
+        actor: { id: "hr", organizationId: "org-a", permissions: ROLE_PERMISSIONS.hr },
+        entryId: submitted.entry.id,
+        action: "approve",
+      },
+      { store, writeAudit: async () => undefined },
+    );
+    expect(execDeniedAsHr).toMatchObject({ ok: false, status: 403 });
+
+    const finished = await decideLeave(
+      {
+        actor: { id: "exec", organizationId: "org-a", permissions: ROLE_PERMISSIONS.executive },
+        entryId: submitted.entry.id,
+        action: "approve",
+      },
+      { store, writeAudit: async () => undefined },
+    );
+    expect(finished.ok).toBe(true);
+    if (!finished.ok) return;
+    expect(finished.entry.status).toBe("approved");
+    expect(finished.ledgerPosted).toBe(true);
+  });
+
+  it("routes LWOP through manager then HR and enqueues a decision outbox row", async () => {
+    const store = world();
+    store.leaveType = { ...store.leaveType, code: "lwop", consumesBalance: false };
+    store.ptoAvailableMinutes = 0;
+    const submitted = await submitLeave(
+      {
+        actor: alice,
+        employeeId: store.employee.id,
+        leaveTypeId: store.leaveType.id,
+        startDate: MON,
+        endDate: MON,
+        portion: "full",
+        qualifyingCondition: "PTO exhausted after delayed return",
+      },
+      { store, writeAudit: async () => undefined, notify: async () => undefined },
+    );
+    expect(submitted.ok).toBe(true);
+    if (!submitted.ok) return;
+    store.employee = { ...store.employee, orgId: "org-a", managerId: "mgr" };
+    expect(submitted.entry.approvalStage).toBe("manager");
+
+    const manager: AuthzActor = {
+      id: "mgr",
+      organizationId: "org-a",
+      permissions: ROLE_PERMISSIONS.manager,
+    };
+    const stepped = await decideLeave(
+      { actor: manager, entryId: submitted.entry.id, action: "approve" },
+      { store, writeAudit: async () => undefined },
+    );
+    expect(stepped.ok).toBe(true);
+    if (!stepped.ok) return;
+    expect(stepped.entry.approvalStage).toBe("hr");
+    expect(stepped.entry.status).toBe("pending");
+
+    const hr: AuthzActor = {
+      id: "hr",
+      organizationId: "org-a",
+      permissions: ROLE_PERMISSIONS.hr,
+    };
+    const finished = await decideLeave(
+      { actor: hr, entryId: submitted.entry.id, action: "approve" },
+      { store, writeAudit: async () => undefined },
+    );
+    expect(finished.ok).toBe(true);
+    if (!finished.ok) return;
+    expect(finished.entry.status).toBe("approved");
+  });
 });
 

@@ -15,3 +15,12 @@
 | Self-approval denied | `canApproveLeave` | `src/server/authz.test.ts` |
 | Membership permissions canonical | `toAuthzActor`, `authorizeAdmin` | `src/server/auth-gate.test.ts` |
 | Outbox idempotency | `enqueueOutbox` | `src/server/notify-outbox.test.ts` |
+| Manager then Executive/HR stages | `requiredApprovalStages`, `decideLeave` | `src/server/leave/workflow.test.ts`, `src/server/leave/decide.test.ts` |
+| Pending/decision mail routing | `pendingNotifyRoles`, `decisionNotifyRoles` | `src/server/notify-route.test.ts` |
+| Privileged MFA production gate | `privilegedMfaConfigured` | `src/server/mfa.test.ts` |
+| Durable login rate limit | `consumeDurableLoginAttempt` | `src/server/rate-limit.test.ts` |
+| Probation / notice-period PTO block | `probationRestriction`, `employmentNoticeRestriction` | `src/server/policy/rules/abs-employment.test.ts` |
+| Sick documentation flag | `sickDocumentationMayBeRequired` | `src/server/policy/rules/abs-leave-types.test.ts` |
+| LWOP eligibility | `lwopEligibility` | `src/server/policy/rules/abs-leave-types.test.ts` |
+| Make-up time off PTO ledger | `createMakeupEntry` | `src/server/makeup.test.ts` |
+| Restore drill | `src/ops/restore-drill.sh` | scratch restore evidence |

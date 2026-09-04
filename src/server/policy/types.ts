@@ -36,6 +36,9 @@ export const FOLLOW_ON_RULE_CODES = [
   "max_concurrent",
   "max_consecutive",
   "accrual_stop",
+  "probation",
+  "employment_notice",
+  "lwop_eligibility",
 ] as const;
 
 export type CutoverRuleCode = (typeof CUTOVER_RULE_CODES)[number];
@@ -50,6 +53,8 @@ export type PolicyEmployee = {
   startDate: string;
   workdayMinutes?: number | null;
   role?: string;
+  probationEndDate?: string | null;
+  noticePeriodStartDate?: string | null;
 };
 
 export type ProposedLeave = {
@@ -136,4 +141,7 @@ export type EvaluateLeaveInput = {
   periodStatuses: readonly PeriodStatus[];
   /** Waiting-period only. Other Cutover rules still apply. */
   override?: boolean;
+  leaveTypeCode?: string;
+  ptoAvailableMinutes?: number;
+  qualifyingCondition?: string | null;
 };

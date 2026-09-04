@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { privilegedMfaConfigured } from "./mfa";
 import { canAccessAdminPortal, type Permission } from "./permissions";
 
 export type EmployeeRole = "employee" | "manager" | "admin";
@@ -69,11 +70,13 @@ export function authorizeAdmin(employee: EmployeeAccess | null | undefined): Adm
   }
   if (employee.permissions !== undefined) {
     if (!canAccessAdminPortal(employee)) return { status: "forbidden" };
+    if (!privilegedMfaConfigured()) return { status: "forbidden" };
     return { status: "ok" };
   }
   if (employee.role !== "admin") {
     return { status: "forbidden" };
   }
+  if (!privilegedMfaConfigured()) return { status: "forbidden" };
   return { status: "ok" };
 }
 

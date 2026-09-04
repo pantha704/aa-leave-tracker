@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withLoginRateLimit } from "./login-throttle";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   LOGIN_RATE_LIMIT_MAX_KEYS,
   clearLoginRateLimits,
   clientIpFromHeaders,
+  consumeDurableLoginAttempt,
   consumeLoginAttempt,
+  durableRateLimitConfigured,
   loginRateLimitSize,
   loginThrottleMessage,
   resetLoginAttempts,
@@ -82,6 +87,33 @@ describe("login rate limit", () => {
 
   it("formats a retry message with seconds", () => {
     expect(loginThrottleMessage(42)).toBe("Too many login attempts. Try again in 42s.");
+  });
+
+  it("persists attempts to a file store and requires a durable config in production", () => {
+    expect(durableRateLimitConfigured({ NODE_ENV: "production" })).toBe(false);
+    expect(
+      durableRateLimitConfigured({ NODE_ENV: "production", LOGIN_RATE_LIMIT_FILE: "/tmp/rl.json" }),
+    ).toBe(true);
+    expect(durableRateLimitConfigured({ NODE_ENV: "test" })).toBe(true);
+
+    const dir = mkdtempSync(join(tmpdir(), "aa-rl-"));
+    const file = join(dir, "limit.json");
+    const now = 1_700_000_000_000;
+    try {
+      for (let i = 0; i < 10; i++) {
+        expect(consumeDurableLoginAttempt("8.8.8.8", now, file)).toEqual({ ok: true });
+      }
+      expect(consumeDurableLoginAttempt("8.8.8.8", now + 1, file)).toEqual({
+        ok: false,
+        retryAfterSec: 900,
+      });
+      expect(consumeDurableLoginAttempt("8.8.8.8", now + 1, file)).toEqual({
+        ok: false,
+        retryAfterSec: 900,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

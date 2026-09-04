@@ -1,5 +1,6 @@
 import {
   clientIpFromHeaders,
+  consumeDurableLoginAttempt,
   consumeLoginAttempt,
   loginThrottleMessage,
   resetLoginAttempts,
@@ -23,7 +24,9 @@ export async function withLoginRateLimit(
   }
 
   const ip = clientIpFromHeaders(request.headers);
-  const limited = consumeLoginAttempt(ip);
+  const limited = process.env.LOGIN_RATE_LIMIT_FILE?.trim()
+    ? consumeDurableLoginAttempt(ip)
+    : consumeLoginAttempt(ip);
   if (!limited.ok) {
     return Response.json(
       { message: loginThrottleMessage(limited.retryAfterSec) },

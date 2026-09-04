@@ -20,6 +20,7 @@ export type MemoryWorld = {
   today: string;
   orgSettings?: Partial<OrgLeaveSettings>;
   hasPolicy?: boolean;
+  ptoAvailableMinutes?: number;
 };
 
 const DEFAULT_ORG_SETTINGS: OrgLeaveSettings = {
@@ -41,6 +42,7 @@ export class MemoryLeaveStore implements LeaveStore {
   policy: PolicySnapshot;
   orgSettings: OrgLeaveSettings;
   hasPolicy: boolean;
+  ptoAvailableMinutes?: number;
 
   constructor(world: MemoryWorld) {
     this.employee = world.employee;
@@ -51,6 +53,7 @@ export class MemoryLeaveStore implements LeaveStore {
     this.today = world.today;
     this.orgSettings = { ...DEFAULT_ORG_SETTINGS, ...world.orgSettings };
     this.hasPolicy = world.hasPolicy !== false;
+    this.ptoAvailableMinutes = world.ptoAvailableMinutes;
   }
 
   async withEmployeeLock<T>(employeeId: string, fn: () => Promise<T>): Promise<T> {
@@ -87,6 +90,7 @@ export class MemoryLeaveStore implements LeaveStore {
         periodStatuses: this.periodStatuses,
         today,
         balance,
+        ptoAvailableMinutes: this.ptoAvailableMinutes,
         orgSettings: this.orgSettings,
       },
     };
@@ -182,6 +186,7 @@ export class MemoryLeaveStore implements LeaveStore {
       updatedBy: string;
       updatedAt: Date;
       adminNote?: string | null;
+      approvalStage?: string | null;
     },
   ): Promise<void> {
     const entry = this.entries.find((row) => row.id === id);
@@ -190,6 +195,7 @@ export class MemoryLeaveStore implements LeaveStore {
     entry.updatedBy = patch.updatedBy;
     entry.updatedAt = patch.updatedAt;
     if (patch.adminNote !== undefined) entry.adminNote = patch.adminNote;
+    if (patch.approvalStage !== undefined) entry.approvalStage = patch.approvalStage;
   }
 
   async deactivateDays(leaveEntryId: string): Promise<void> {

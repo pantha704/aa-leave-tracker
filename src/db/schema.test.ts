@@ -10,6 +10,7 @@ import {
   DEMO_VACATION_TAKE_CEILING_MINUTES,
   DEMO_VACATION_TYPE_CODE,
   DEMO_WORKDAY_MINUTES,
+  PARENTAL_LEAVE_PRODUCTION_ENABLED,
 } from "./demo-policy";
 import { readFileSync } from "node:fs";
 import {
@@ -44,6 +45,7 @@ import {
   organizationRoles,
   reportingRelationships,
 } from "./schema-membership";
+import { loginRateLimits, makeupEntries, notificationOutbox } from "./schema-ops";
 
 const tables = {
   organizations,
@@ -68,6 +70,9 @@ const tables = {
   organizationMemberships,
   membershipRoles,
   reportingRelationships,
+  notificationOutbox,
+  makeupEntries,
+  loginRateLimits,
 };
 
 describe("demo-policy DEMO constants", () => {
@@ -81,6 +86,7 @@ describe("demo-policy DEMO constants", () => {
     expect(DEMO_VACATION_TYPE_CODE).toBe("pto");
     expect(DEMO_LWOP_TYPE_CODE).toBe("lwop");
     expect(DEMO_VACATION_TYPE_CODE).not.toBe("vacation_unpaid");
+    expect(PARENTAL_LEAVE_PRODUCTION_ENABLED).toBe(false);
   });
 });
 
@@ -110,6 +116,9 @@ describe("normative schema", () => {
         "organizationMemberships",
         "membershipRoles",
         "reportingRelationships",
+        "notificationOutbox",
+        "makeupEntries",
+        "loginRateLimits",
       ].sort(),
     );
     for (const [name, table] of Object.entries(tables)) {
@@ -195,6 +204,8 @@ describe("normative schema", () => {
     const cols = getTableColumns(employees);
     expect(cols.mustChangePassword.name).toBe("must_change_password");
     expect(cols.authUserId.name).toBe("auth_user_id");
+    expect(cols.probationEndDate.name).toBe("probation_end_date");
+    expect(cols.noticePeriodStartDate.name).toBe("notice_period_start_date");
   });
 
   it("commits a membership migration that lifts global auth-user uniqueness", () => {

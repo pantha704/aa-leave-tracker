@@ -86,6 +86,8 @@ export const employees = pgTable(
     managerId: uuid("manager_id").references((): AnyPgColumn => employees.id),
     startDate: isoDate("start_date").notNull(),
     endDate: isoDate("end_date"),
+    probationEndDate: isoDate("probation_end_date"),
+    noticePeriodStartDate: isoDate("notice_period_start_date"),
     employmentType: text("employment_type").notNull().default("full_time"),
     workdayMinutes: integer("workday_minutes"),
     active: boolean("active").notNull().default(true),
@@ -276,6 +278,8 @@ export const leaveEntries = pgTable(
     totalMinutes: integer("total_minutes").notNull(),
     note: text("note"),
     adminNote: text("admin_note"),
+    approvalStage: text("approval_stage"),
+    documentationMayBeRequired: boolean("documentation_may_be_required").notNull().default(false),
     importBatchId: uuid("import_batch_id").references(() => importBatches.id),
     createdBy: uuid("created_by")
       .notNull()

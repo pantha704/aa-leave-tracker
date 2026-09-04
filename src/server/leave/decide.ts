@@ -6,6 +6,15 @@ import {
   type AuthzActor,
   type PeriodGate,
 } from "@/server/authz";
+import { enqueueProcessOutbox } from "@/server/notify-outbox";
+import { decisionNotifyRoles, pendingNotifyRoles } from "@/server/notify-route";
+import {
+  canFulfillStage,
+  defaultLeaveTypeCode,
+  nextApprovalStage,
+  requiredApprovalStages,
+  type ApprovalStage,
+} from "./workflow";
 import type { LeaveStatus } from "@/server/policy/types";
 import { APP_READONLY_CODE, APP_READONLY_MESSAGE } from "@/server/settings";
 import {
@@ -134,8 +143,17 @@ export async function decideLeave(
       };
       const adminNote = decisionCommentFor(actor, targetAuthz, input.adminNote);
 
+      const stages = requiredApprovalStages({
+        leaveTypeCode: defaultLeaveTypeCode(snap.leaveType.code),
+        startDate: entry.startDate,
+        endDate: entry.endDate,
+      });
+      const currentStage = (entry.approvalStage as ApprovalStage | undefined) ?? stages[0] ?? "manager";
+
       if (input.action === "approve" || input.action === "reject") {
-        if (!canApproveLeave(actor, targetAuthz)) return fail(403, "FORBIDDEN", "forbidden");
+        if (!canFulfillStage(actor, currentStage, targetAuthz)) {
+          return fail(403, "FORBIDDEN", "forbidden");
+        }
       } else if (!canCancelEntry(actor, targetAuthz, period)) {
         return fail(403, "FORBIDDEN", "forbidden");
       }
@@ -175,11 +193,58 @@ export async function decideLeave(
         });
         if (yearly) return yearly;
 
+        const nextStage = nextApprovalStage(stages, currentStage);
+        if (nextStage !== "done") {
+          await store.updateEntry(entry.id, {
+            status: "pending",
+            updatedBy: actor.id,
+            updatedAt: now,
+            adminNote,
+            approvalStage: nextStage,
+          });
+          enqueueProcessOutbox({
+            organizationId: targetAuthz.organizationId ?? "",
+            kind: "leave.pending",
+            sourceId: `${entry.id}:${nextStage}`,
+            payload: {
+              action: "approve",
+              nextStage,
+              actorId: actor.id,
+              recipients: pendingNotifyRoles(nextStage),
+            },
+          });
+          await tryWriteAudit(options.writeAudit ?? writeAuditEvent, {
+            actorId: actor.id,
+            action: "leave.approve.step",
+            entityType: "leave_entry",
+            entityId: entry.id,
+            before: { status: entry.status, approvalStage: currentStage },
+            after: { status: "pending", approvalStage: nextStage },
+          });
+          return {
+            ok: true,
+            status: 200,
+            action: "approve",
+            entry: {
+              ...entry,
+              status: "pending",
+              updatedBy: actor.id,
+              updatedAt: now,
+              adminNote: adminNote !== undefined ? adminNote : entry.adminNote,
+              approvalStage: nextStage,
+            },
+            days,
+            intent: entry.intent,
+            ledgerPosted: false,
+          };
+        }
+
         await store.updateEntry(entry.id, {
           status: "approved",
           updatedBy: actor.id,
           updatedAt: now,
           adminNote,
+          approvalStage: "done",
         });
         await postUsageForDays(store, {
           employeeId: entry.employeeId,
@@ -196,6 +261,12 @@ export async function decideLeave(
           updatedAt: now,
           adminNote: adminNote !== undefined ? adminNote : entry.adminNote,
         };
+        enqueueProcessOutbox({
+          organizationId: targetAuthz.organizationId ?? "",
+          kind: "leave.decision",
+          sourceId: entry.id,
+          payload: { action: "approve", actorId: actor.id, recipients: decisionNotifyRoles() },
+        });
         await tryWriteAudit(options.writeAudit ?? writeAuditEvent, {
           actorId: actor.id,
           action: "leave.approve",
@@ -220,6 +291,12 @@ export async function decideLeave(
         updatedBy: actor.id,
         updatedAt: now,
         adminNote,
+      });
+      enqueueProcessOutbox({
+        organizationId: targetAuthz.organizationId ?? "",
+        kind: "leave.decision",
+        sourceId: entry.id,
+        payload: { action: input.action, actorId: actor.id, recipients: decisionNotifyRoles() },
       });
       await store.deactivateDays(entry.id);
       if (entry.status === "approved") {

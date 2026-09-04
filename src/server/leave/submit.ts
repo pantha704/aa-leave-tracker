@@ -55,7 +55,7 @@ import {
   tryNotifyLeavePending,
   type PendingLeaveEntryNotice,
 } from "@/server/notify";
-import { enqueueProcessOutbox } from "@/server/notify-outbox";
+import { enqueueProcessOutbox, type EnqueueOutboxInput } from "@/server/notify-outbox";
 import { pendingNotifyRoles } from "@/server/notify-route";
 import { sickDocumentationMayBeRequired } from "@/server/policy/rules/abs-leave-types";
 import { defaultLeaveTypeCode, requiredApprovalStages } from "./workflow";
@@ -187,6 +187,7 @@ export type LeaveStore = {
     reason: string;
     createdAt: Date;
   }) => Promise<void>;
+  enqueueOutbox: (input: EnqueueOutboxInput) => Promise<boolean>;
 };
 
 export type SubmitLeaveInput = {
@@ -672,6 +673,20 @@ export async function submitLeave(
         after: { intent, status: entry.status, ledgerPosted: evaluation.postsLedger },
       });
 
+      if (entry.status === "pending") {
+        await store.enqueueOutbox({
+          organizationId: snap.employee.orgId ?? actor.organizationId ?? "",
+          kind: "leave.pending",
+          sourceId: entry.id,
+          payload: {
+            employeeId: entry.employeeId,
+            startDate: entry.startDate,
+            endDate: entry.endDate,
+            recipients: pendingNotifyRoles(entry.approvalStage),
+          },
+        });
+      }
+
       return {
         ok: true as const,
         status: 200 as const,
@@ -682,17 +697,6 @@ export async function submitLeave(
       };
     });
     if (result.ok && result.entry.status === "pending") {
-      enqueueProcessOutbox({
-        organizationId: actor.organizationId ?? "",
-        kind: "leave.pending",
-        sourceId: result.entry.id,
-        payload: {
-          employeeId: result.entry.employeeId,
-          startDate: result.entry.startDate,
-          endDate: result.entry.endDate,
-          recipients: pendingNotifyRoles(result.entry.approvalStage),
-        },
-      });
       await tryNotifyLeavePending(options.notify ?? notifyPendingLeaveEntry, {
         employeeId: result.entry.employeeId,
         leaveTypeId: result.entry.leaveTypeId,
@@ -1097,6 +1101,10 @@ export const dbLeaveStore: LeaveStore = {
 
   async reverseUsageForEntry(input) {
     await reverseUsageRows(currentDb(), input);
+  },
+
+  async enqueueOutbox(input) {
+    return enqueueProcessOutbox(input, currentDb());
   },
 };
 

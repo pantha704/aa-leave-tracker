@@ -2,6 +2,11 @@ import { computeBalance } from "@/server/ledger/balance";
 import { MemoryLedger, SerialLock } from "@/server/ledger/memory";
 import { portionsConflict } from "@/server/policy/rules/overlap";
 import type { ExistingLeave, HolidayDate, PeriodStatus, PolicySnapshot } from "@/server/policy/types";
+import {
+  enqueueOutbox,
+  type EnqueueOutboxInput,
+  type OutboxRecord,
+} from "@/server/notify-outbox";
 import type {
   LeaveDayRecord,
   LeaveEntryRecord,
@@ -43,6 +48,7 @@ export class MemoryLeaveStore implements LeaveStore {
   orgSettings: OrgLeaveSettings;
   hasPolicy: boolean;
   ptoAvailableMinutes?: number;
+  outbox: OutboxRecord[] = [];
 
   constructor(world: MemoryWorld) {
     this.employee = world.employee;
@@ -237,5 +243,14 @@ export class MemoryLeaveStore implements LeaveStore {
       this.ledger.reverse(row.id, input.createdBy, input.reason);
     }
     void input.createdAt;
+  }
+
+  async enqueueOutbox(input: EnqueueOutboxInput): Promise<boolean> {
+    const result = enqueueOutbox(this.outbox, {
+      ...input,
+      id: input.id ?? `${input.kind}:${input.sourceId}:${this.outbox.length}`,
+    });
+    this.outbox = result.records;
+    return result.inserted;
   }
 }

@@ -270,6 +270,15 @@ describe("decideLeave", () => {
     const submitted = await submitMonday(store);
     expect(submitted.ok).toBe(true);
     if (!submitted.ok) return;
+    expect(store.outbox).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "leave.pending",
+          sourceId: submitted.entry.id,
+          status: "pending",
+        }),
+      ]),
+    );
     const rejected = await decideLeave(
       { actor: admin, entryId: submitted.entry.id, action: "reject", adminNote: "coverage" },
       { store, writeAudit: async () => undefined },
@@ -278,6 +287,16 @@ describe("decideLeave", () => {
     if (!rejected.ok) return;
     expect(rejected.entry.status).toBe("rejected");
     expect(store.ledger.rows.filter((row) => row.kind === "usage")).toHaveLength(0);
+    expect(store.outbox).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "leave.decision",
+          sourceId: submitted.entry.id,
+          status: "pending",
+          payload: expect.objectContaining({ action: "reject", recipients: ["employee", "hr"] }),
+        }),
+      ]),
+    );
     const again = await submitMonday(store);
     expect(again.ok).toBe(true);
   });

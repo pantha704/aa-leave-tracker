@@ -13,9 +13,9 @@ import {
 import { getDb } from "@/server/db";
 import {
   clientIpFromHeaders,
-  consumeLoginAttempt,
+  consumeLoginThrottle,
   loginThrottleMessage,
-  resetLoginAttempts,
+  resetLoginThrottle,
 } from "@/server/rate-limit";
 
 export type AuthFormState = { error: string } | undefined;
@@ -31,7 +31,7 @@ export async function signInAction(
   }
 
   const ip = clientIpFromHeaders(await headers());
-  const limited = consumeLoginAttempt(ip);
+  const limited = await consumeLoginThrottle(ip);
   if (!limited.ok) {
     return { error: loginThrottleMessage(limited.retryAfterSec) };
   }
@@ -56,11 +56,11 @@ export async function signInAction(
   }
 
   if (employee.mustChangePassword) {
-    resetLoginAttempts(ip);
+    await resetLoginThrottle(ip);
     redirect("/login/change-password");
   }
 
-  resetLoginAttempts(ip);
+  await resetLoginThrottle(ip);
   redirect(homeForRole(employee.role as EmployeeRole));
 }
 

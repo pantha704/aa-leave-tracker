@@ -1,5 +1,8 @@
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { eq } from "drizzle-orm";
+import { loginRateLimits } from "@/db/schema-ops";
+import { getDb } from "@/server/db";
 
 /** In-memory login throttle. Per-process only; not shared across instances or serverless isolates. */
 
@@ -123,18 +126,70 @@ export function consumeDurableLoginAttempt(
   now = Date.now(),
   filePath = process.env.LOGIN_RATE_LIMIT_FILE?.trim() || "",
 ): RateLimitDecision {
-  if (!filePath) return consumeLoginAttempt(ip, now);
+  if (!filePath) {
+    return { ok: false, retryAfterSec: 60 };
+  }
   const store = loadRateLimitStore(filePath);
   const decision = consumeLoginAttemptOn(store, ip, now);
   persistRateLimitStore(filePath, store);
   return decision;
 }
 
+export async function consumeDbLoginAttempt(
+  ip: string,
+  now = Date.now(),
+): Promise<RateLimitDecision> {
+  const db = getDb();
+  const key = ip.trim() || "direct";
+  const rows = await db.select().from(loginRateLimits).where(eq(loginRateLimits.key, key)).limit(1);
+  const existing = rows[0];
+  if (!existing || now >= existing.resetAt.getTime()) {
+    await db
+      .insert(loginRateLimits)
+      .values({ key, count: 1, resetAt: new Date(now + LOGIN_RATE_LIMIT_WINDOW_MS) })
+      .onConflictDoUpdate({
+        target: loginRateLimits.key,
+        set: { count: 1, resetAt: new Date(now + LOGIN_RATE_LIMIT_WINDOW_MS) },
+      });
+    return { ok: true };
+  }
+  if (existing.count >= LOGIN_RATE_LIMIT_MAX) {
+    return { ok: false, retryAfterSec: retryAfterSec(existing.resetAt.getTime(), now) };
+  }
+  await db
+    .update(loginRateLimits)
+    .set({ count: existing.count + 1 })
+    .where(eq(loginRateLimits.key, key));
+  return { ok: true };
+}
+
+/** One durable limiter for the login form and /api/auth. File store or login_rate_limits table. */
+export async function consumeLoginThrottle(
+  ip: string,
+  now = Date.now(),
+): Promise<RateLimitDecision> {
+  const file = process.env.LOGIN_RATE_LIMIT_FILE?.trim();
+  if (file) return consumeDurableLoginAttempt(ip, now, file);
+  return consumeDbLoginAttempt(ip, now);
+}
+
+export async function resetLoginThrottle(ip: string): Promise<void> {
+  const key = ip.trim() || "direct";
+  const file = process.env.LOGIN_RATE_LIMIT_FILE?.trim();
+  if (file) {
+    const store = loadRateLimitStore(file);
+    store.delete(key);
+    persistRateLimitStore(file, store);
+    return;
+  }
+  await getDb().delete(loginRateLimits).where(eq(loginRateLimits.key, key));
+}
+
 export function durableRateLimitConfigured(
   env: Partial<Record<string, string | undefined>> = process.env,
 ): boolean {
   if (env.NODE_ENV !== "production") return true;
-  return Boolean(env.LOGIN_RATE_LIMIT_FILE?.trim() || env.LOGIN_RATE_LIMIT_DB === "1");
+  return Boolean(env.LOGIN_RATE_LIMIT_FILE?.trim() || env.DATABASE_URL?.trim());
 }
 
 export function resetLoginAttempts(ip: string): void {

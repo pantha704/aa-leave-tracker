@@ -15,6 +15,7 @@ import {
   policyAssignments,
   policyPeriods,
 } from "@/db/schema";
+import { notificationOutbox } from "@/db/schema-ops";
 import { getDatabaseUrl, pingDatabase } from "@/server/db";
 import { postLedgerEntry } from "@/server/ledger/post";
 import { decideLeave } from "./decide";
@@ -30,6 +31,7 @@ describe.skipIf(!url)("leave submit against Postgres", () => {
   let adminId: string;
   let employeeId: string;
   let leaveTypeId: string;
+  let orgId: string;
 
   beforeAll(async () => {
     if (!url) return;
@@ -40,7 +42,13 @@ describe.skipIf(!url)("leave submit against Postgres", () => {
     sql = postgres(url, { max: 8, connect_timeout: 8 });
     db = drizzle(sql);
     await sql.unsafe("CREATE EXTENSION IF NOT EXISTS citext");
-    for (const file of ["0000_fancy_anita_blake.sql", "0001_dapper_chat.sql"]) {
+    for (const file of [
+      "0000_fancy_anita_blake.sql",
+      "0001_dapper_chat.sql",
+      "0002_keen_omega_sentinel.sql",
+      "0003_purple_jubilee.sql",
+      "0004_approval_stage.sql",
+    ]) {
       const migration = readFileSync(path.join(process.cwd(), "src/db/migrations", file), "utf8");
       for (const statement of migration.split("--> statement-breakpoint")) {
         const trimmed = statement.trim();
@@ -130,6 +138,7 @@ describe.skipIf(!url)("leave submit against Postgres", () => {
     adminId = admin.id;
     employeeId = emp.id;
     leaveTypeId = type.id;
+    orgId = org.id;
   }, 30_000);
 
   afterAll(async () => {
@@ -140,7 +149,7 @@ describe.skipIf(!url)("leave submit against Postgres", () => {
     await runWithLeaveDb(db, async () => {
       const first = await submitLeave(
         {
-          actor: { id: employeeId, role: "employee" },
+          actor: { id: employeeId, organizationId: orgId, role: "employee" },
           employeeId,
           leaveTypeId,
           startDate: MON,
@@ -153,7 +162,7 @@ describe.skipIf(!url)("leave submit against Postgres", () => {
       if (!first.ok) return;
 
       const cancelled = await decideLeave(
-        { actor: { id: employeeId, role: "employee" }, entryId: first.entry.id, action: "cancel" },
+        { actor: { id: employeeId, organizationId: orgId, role: "employee" }, entryId: first.entry.id, action: "cancel" },
         { today: TODAY, writeAudit: async () => undefined },
       );
       expect(cancelled.ok).toBe(true);
@@ -167,7 +176,7 @@ describe.skipIf(!url)("leave submit against Postgres", () => {
 
       const second = await submitLeave(
         {
-          actor: { id: employeeId, role: "employee" },
+          actor: { id: employeeId, organizationId: orgId, role: "employee" },
           employeeId,
           leaveTypeId,
           startDate: MON,
@@ -187,6 +196,30 @@ describe.skipIf(!url)("leave submit against Postgres", () => {
       expect(active.filter((day) => day.slotActive)).toHaveLength(1);
       expect(active.filter((day) => !day.slotActive)).toHaveLength(1);
       void adminId;
+    });
+  });
+
+  it("persists a pending notification_outbox row from submitLeave", async () => {
+    await runWithLeaveDb(db, async () => {
+      const submitted = await submitLeave(
+        {
+          actor: { id: employeeId, organizationId: orgId, role: "employee" },
+          employeeId,
+          leaveTypeId,
+          startDate: "2026-07-13",
+          endDate: "2026-07-13",
+          portion: "full",
+        },
+        { today: TODAY, writeAudit: async () => undefined, notify: async () => undefined },
+      );
+      expect(submitted.ok).toBe(true);
+      if (!submitted.ok) return;
+      const rows = await db
+        .select()
+        .from(notificationOutbox)
+        .where(eq(notificationOutbox.sourceId, submitted.entry.id));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ kind: "leave.pending", status: "pending" });
     });
   });
 });

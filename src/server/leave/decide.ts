@@ -6,7 +6,7 @@ import {
   type AuthzActor,
   type PeriodGate,
 } from "@/server/authz";
-import { enqueueProcessOutbox } from "@/server/notify-outbox";
+
 import { decisionNotifyRoles, pendingNotifyRoles } from "@/server/notify-route";
 import {
   canFulfillStage,
@@ -202,7 +202,7 @@ export async function decideLeave(
             adminNote,
             approvalStage: nextStage,
           });
-          enqueueProcessOutbox({
+          await store.enqueueOutbox({
             organizationId: targetAuthz.organizationId ?? "",
             kind: "leave.pending",
             sourceId: `${entry.id}:${nextStage}`,
@@ -261,7 +261,7 @@ export async function decideLeave(
           updatedAt: now,
           adminNote: adminNote !== undefined ? adminNote : entry.adminNote,
         };
-        enqueueProcessOutbox({
+        await store.enqueueOutbox({
           organizationId: targetAuthz.organizationId ?? "",
           kind: "leave.decision",
           sourceId: entry.id,
@@ -292,7 +292,7 @@ export async function decideLeave(
         updatedAt: now,
         adminNote,
       });
-      enqueueProcessOutbox({
+      await store.enqueueOutbox({
         organizationId: targetAuthz.organizationId ?? "",
         kind: "leave.decision",
         sourceId: entry.id,

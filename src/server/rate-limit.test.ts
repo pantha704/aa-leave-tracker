@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withLoginRateLimit } from "./login-throttle";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,10 +9,12 @@ import {
   clientIpFromHeaders,
   consumeDurableLoginAttempt,
   consumeLoginAttempt,
+  consumeLoginThrottle,
   durableRateLimitConfigured,
   loginRateLimitSize,
   loginThrottleMessage,
   resetLoginAttempts,
+  resetLoginThrottle,
 } from "./rate-limit";
 
 afterEach(() => {
@@ -94,6 +96,9 @@ describe("login rate limit", () => {
     expect(
       durableRateLimitConfigured({ NODE_ENV: "production", LOGIN_RATE_LIMIT_FILE: "/tmp/rl.json" }),
     ).toBe(true);
+    expect(
+      durableRateLimitConfigured({ NODE_ENV: "production", DATABASE_URL: "postgres://x" }),
+    ).toBe(true);
     expect(durableRateLimitConfigured({ NODE_ENV: "test" })).toBe(true);
 
     const dir = mkdtempSync(join(tmpdir(), "aa-rl-"));
@@ -121,7 +126,51 @@ function signInReq() {
   return new Request("http://localhost/api/auth/sign-in/email", { method: "POST" });
 }
 
+describe("consumeLoginThrottle", () => {
+  it("uses the file store on the shared login path", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aa-rl-"));
+    const file = join(dir, "limit.json");
+    const prev = process.env.LOGIN_RATE_LIMIT_FILE;
+    process.env.LOGIN_RATE_LIMIT_FILE = file;
+    const now = 1_700_000_000_000;
+    try {
+      for (let i = 0; i < 10; i++) {
+        expect(await consumeLoginThrottle("1.1.1.1", now)).toEqual({ ok: true });
+      }
+      expect(await consumeLoginThrottle("1.1.1.1", now + 1)).toEqual({
+        ok: false,
+        retryAfterSec: 900,
+      });
+      await resetLoginThrottle("1.1.1.1");
+      expect(await consumeLoginThrottle("1.1.1.1", now + 1)).toEqual({ ok: true });
+    } finally {
+      if (prev === undefined) delete process.env.LOGIN_RATE_LIMIT_FILE;
+      else process.env.LOGIN_RATE_LIMIT_FILE = prev;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("withLoginRateLimit", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aa-rl-api-"));
+  const file = join(dir, "limit.json");
+  const prevFile = process.env.LOGIN_RATE_LIMIT_FILE;
+
+  beforeEach(() => {
+    process.env.LOGIN_RATE_LIMIT_FILE = file;
+    try {
+      rmSync(file);
+    } catch {
+      /* missing */
+    }
+  });
+
+  afterAll(() => {
+    if (prevFile === undefined) delete process.env.LOGIN_RATE_LIMIT_FILE;
+    else process.env.LOGIN_RATE_LIMIT_FILE = prevFile;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("returns 429 and Retry-After after the 10th failed sign-in", async () => {
     const next = vi.fn(async () => new Response("no", { status: 401 }));
     for (let i = 0; i < 10; i++) {

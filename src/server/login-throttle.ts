@@ -1,9 +1,8 @@
 import {
   clientIpFromHeaders,
-  consumeDurableLoginAttempt,
-  consumeLoginAttempt,
+  consumeLoginThrottle,
   loginThrottleMessage,
-  resetLoginAttempts,
+  resetLoginThrottle,
 } from "./rate-limit";
 
 export function isSignInPath(pathname: string): boolean {
@@ -24,9 +23,7 @@ export async function withLoginRateLimit(
   }
 
   const ip = clientIpFromHeaders(request.headers);
-  const limited = process.env.LOGIN_RATE_LIMIT_FILE?.trim()
-    ? consumeDurableLoginAttempt(ip)
-    : consumeLoginAttempt(ip);
+  const limited = await consumeLoginThrottle(ip);
   if (!limited.ok) {
     return Response.json(
       { message: loginThrottleMessage(limited.retryAfterSec) },
@@ -36,7 +33,7 @@ export async function withLoginRateLimit(
 
   const response = await next(request);
   if (isSuccessfulSignIn(response)) {
-    resetLoginAttempts(ip);
+    await resetLoginThrottle(ip);
   }
   return response;
 }

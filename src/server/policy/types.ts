@@ -75,6 +75,8 @@ export type PolicySnapshot = {
   negativeAllowed?: boolean;
   negativeFloorMinutes?: number | null;
   waitingPeriodDays?: number;
+  noticeDays?: number | null;
+  noticeException?: "emergency" | "medical" | null;
   approvalForRequest?: ApprovalMode;
   approvalForLog?: ApprovalMode;
   consumesBalance?: boolean;

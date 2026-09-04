@@ -25,21 +25,38 @@ export function pickOrgId(headerList: Headers, fallback?: string | null): string
   return headerOrg || cookieOrg || fallback || undefined;
 }
 
-export async function permissionsForEmployee(employeeId: string): Promise<readonly Permission[]> {
+export function permissionsFromOrgMemberships(
+  rows: readonly { orgId: string; permissions: readonly string[] }[],
+  orgId: string,
+): Permission[] {
+  const merged: string[] = [];
+  for (const row of rows) {
+    if (row.orgId === orgId) merged.push(...row.permissions);
+  }
+  return parsePermissions(merged);
+}
+
+export async function permissionsForEmployee(
+  employeeId: string,
+  orgId: string,
+): Promise<readonly Permission[]> {
   try {
     const db = getDb();
     const rows = await db
-      .select({ permissions: organizationRoles.permissions })
+      .select({
+        orgId: organizationMemberships.orgId,
+        permissions: organizationRoles.permissions,
+      })
       .from(organizationMemberships)
       .innerJoin(membershipRoles, eq(membershipRoles.membershipId, organizationMemberships.id))
       .innerJoin(organizationRoles, eq(organizationRoles.id, membershipRoles.roleId))
-      .where(eq(organizationMemberships.employeeId, employeeId));
-
-    const merged: string[] = [];
-    for (const row of rows) {
-      merged.push(...row.permissions);
-    }
-    return parsePermissions(merged);
+      .where(
+        and(
+          eq(organizationMemberships.employeeId, employeeId),
+          eq(organizationMemberships.orgId, orgId),
+        ),
+      );
+    return permissionsFromOrgMemberships(rows, orgId);
   } catch (err) {
     if (isUndefinedTable(err)) return [];
     throw err;
@@ -141,7 +158,7 @@ export async function toAuthzActor(employee: {
     id: employee.id,
     organizationId: employee.orgId,
     role,
-    permissions: await permissionsForEmployee(employee.id),
+    permissions: await permissionsForEmployee(employee.id, employee.orgId),
   };
 }
 

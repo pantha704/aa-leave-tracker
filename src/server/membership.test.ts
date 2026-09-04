@@ -3,11 +3,13 @@ import {
   ACTIVE_ORG_COOKIE,
   attachInviteMembership,
   mergeEmployeesForAuthUser,
+  permissionsFromOrgMemberships,
   pickOrgId,
   roleKeyForEmployeeRole,
   selectEmployeeForOrg,
   type MembershipWriter,
 } from "./membership";
+import { ROLE_PERMISSIONS } from "./permissions";
 
 describe("selectEmployeeForOrg", () => {
   const rows = [
@@ -28,6 +30,19 @@ describe("selectEmployeeForOrg", () => {
       "emp-a",
     );
     expect(selectEmployeeForOrg([], "org-a")).toBeUndefined();
+  });
+});
+
+describe("permissionsFromOrgMemberships", () => {
+  it("does not union org-A admin permissions onto the org-B actor", () => {
+    const rows = [
+      { orgId: "org-a", permissions: ROLE_PERMISSIONS.org_admin },
+      { orgId: "org-b", permissions: ROLE_PERMISSIONS.employee },
+    ];
+    const orgB = permissionsFromOrgMemberships(rows, "org-b");
+    expect(orgB).toEqual([...ROLE_PERMISSIONS.employee]);
+    expect(orgB).not.toContain("organization.manage");
+    expect(permissionsFromOrgMemberships(rows, "org-a")).toContain("organization.manage");
   });
 });
 

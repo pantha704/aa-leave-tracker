@@ -253,13 +253,25 @@ describe("decideLeave", () => {
     expect(rejected.entry.adminNote).toBe("need coverage");
   });
 
+  it("requires a decision comment to reject", async () => {
+    const store = world();
+    const submitted = await submitMonday(store);
+    expect(submitted.ok).toBe(true);
+    if (!submitted.ok) return;
+    const denied = await decideLeave(
+      { actor: admin, entryId: submitted.entry.id, action: "reject" },
+      { store, writeAudit: async () => undefined },
+    );
+    expect(denied).toMatchObject({ ok: false, status: 422, code: "DECISION_COMMENT_REQUIRED" });
+  });
+
   it("rejects pending without posting usage and frees the slot", async () => {
     const store = world();
     const submitted = await submitMonday(store);
     expect(submitted.ok).toBe(true);
     if (!submitted.ok) return;
     const rejected = await decideLeave(
-      { actor: admin, entryId: submitted.entry.id, action: "reject" },
+      { actor: admin, entryId: submitted.entry.id, action: "reject", adminNote: "coverage" },
       { store, writeAudit: async () => undefined },
     );
     expect(rejected.ok).toBe(true);

@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import { getTableColumns } from "drizzle-orm";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import {
+  DEMO_LWOP_TYPE_CODE,
+  DEMO_PTO_CARRYOVER_MINUTES,
+  DEMO_PTO_TYPE_CODE,
   DEMO_SICK_GRANT_MINUTES,
   DEMO_VACATION_GRANT_MINUTES,
   DEMO_VACATION_TAKE_CEILING_MINUTES,
+  DEMO_VACATION_TYPE_CODE,
   DEMO_WORKDAY_MINUTES,
 } from "./demo-policy";
 import { readFileSync } from "node:fs";
@@ -72,6 +76,11 @@ describe("demo-policy DEMO constants", () => {
     expect(DEMO_VACATION_GRANT_MINUTES).toBe(8160);
     expect(DEMO_VACATION_TAKE_CEILING_MINUTES).toBe(8160);
     expect(DEMO_SICK_GRANT_MINUTES).toBe(1440);
+    expect(DEMO_PTO_CARRYOVER_MINUTES).toBe(4800);
+    expect(DEMO_PTO_TYPE_CODE).toBe("pto");
+    expect(DEMO_VACATION_TYPE_CODE).toBe("pto");
+    expect(DEMO_LWOP_TYPE_CODE).toBe("lwop");
+    expect(DEMO_VACATION_TYPE_CODE).not.toBe("vacation_unpaid");
   });
 });
 

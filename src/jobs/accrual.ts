@@ -1,7 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { and, eq, isNull, ne } from "drizzle-orm";
-import { DEMO_VACATION_TYPE_CODE } from "@/db/demo-policy";
 import {
   employees,
   leaveTypes,
@@ -256,7 +255,6 @@ export function pgAccrualSource(db: LedgerSession, createdByOverride?: string): 
           and(
             eq(employees.orgId, orgId),
             eq(employees.active, true),
-            eq(leaveTypes.code, DEMO_VACATION_TYPE_CODE),
             eq(policies.grantMode, "periodic"),
             eq(policies.periodicCadence, "monthly"),
           ),

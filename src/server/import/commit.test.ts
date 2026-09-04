@@ -28,7 +28,7 @@ function baseWorld(): ImportWorld {
       },
     ],
     leaveTypes: [
-      { id: VACATION, code: "vacation_unpaid", name: "Vacation / Unpaid", consumesBalance: true },
+      { id: VACATION, code: "pto", name: "PTO", consumesBalance: true },
     ],
     policies: [{ employeeId: ADA, leaveTypeId: VACATION, grantMode: "periodic", grantMinutes: null }],
     ledger: [],
@@ -135,7 +135,7 @@ describe("commitImport / reverse", () => {
     });
     const csv = [
       "email,leave_type,as_of,remaining_hours",
-      "ada@example.com,vacation_unpaid,2026-03-01,10.00",
+      "ada@example.com,pto,2026-03-01,10.00",
     ].join("\n");
     const committed = await commitImport(
       {
@@ -198,7 +198,7 @@ describe("commitImport / reverse", () => {
         orgId: "org-1",
         actor: { id: ADMIN, role: "admin" },
         kind: "opening",
-        csv: "email,leave_type,as_of,remaining_hours\nmissing@x.com,vacation_unpaid,2026-01-01,8",
+        csv: "email,leave_type,as_of,remaining_hours\nmissing@x.com,pto,2026-01-01,8",
         map: openingMap,
       },
       store,
@@ -219,7 +219,7 @@ describe("commitImport / reverse", () => {
         kind: "opening",
         csv: [
           "email,leave_type,as_of,remaining_hours",
-          "ada@example.com,vacation_unpaid,2026-03-01,10.00",
+          "ada@example.com,pto,2026-03-01,10.00",
         ].join("\n"),
         map: openingMap,
       },
@@ -242,7 +242,7 @@ describe("commitImport / reverse", () => {
     };
     const csv = [
       "email,leave_type,as_of,remaining_hours",
-      "ada@example.com,vacation_unpaid,2026-03-01,10.00",
+      "ada@example.com,pto,2026-03-01,10.00",
     ].join("\n");
     const preview = await previewImport("org-1", "opening", csv, openingMap, store);
     expect(preview.ok).toBe(true);
@@ -252,7 +252,7 @@ describe("commitImport / reverse", () => {
     const store = memoryStore();
     const csv = [
       "email,leave_type,as_of,remaining_hours",
-      "ada@example.com,vacation_unpaid,2026-03-01,10.00",
+      "ada@example.com,pto,2026-03-01,10.00",
     ].join("\n");
     const committed = await commitImport(
       {

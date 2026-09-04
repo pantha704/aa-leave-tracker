@@ -24,7 +24,7 @@ export function importEmail(): string | null {
 }
 
 export function importLeaveType(): string {
-  return process.env.E2E_IMPORT_LEAVE_TYPE?.trim() || "vacation_unpaid";
+  return process.env.E2E_IMPORT_LEAVE_TYPE?.trim() || "pto";
 }
 
 /** Next Mon–Fri on or after the org calendar day (ISO date). */

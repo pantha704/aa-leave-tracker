@@ -96,7 +96,7 @@ Authenticated flows need a running app plus creds with `must_change_password = f
 
 - `E2E_EMPLOYEE_EMAIL` / `E2E_EMPLOYEE_PASSWORD` for `/me` log and the approve flow
 - `E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD` for `/admin/import` and approve
-- `E2E_IMPORT_EMAIL` (defaults to the employee or admin email) and optional `E2E_IMPORT_LEAVE_TYPE` (default `vacation_unpaid`)
+- `E2E_IMPORT_EMAIL` (defaults to the employee or admin email) and optional `E2E_IMPORT_LEAVE_TYPE` (default `pto`)
 
 Without those env vars the `@smoke` specs still run. Override the server with `PLAYWRIGHT_BASE_URL` if it is already running.
 

@@ -7,6 +7,7 @@ import { overlap } from "./rules/overlap";
 import { spanCrossesToday } from "./rules/span-crosses-today";
 import { takeCeiling } from "./rules/take-ceiling";
 import { waitingPeriod } from "./rules/waiting-period";
+import { noticePeriod } from "./rules/notice-period";
 import { type Evaluation, type EvaluateLeaveInput, type Intent, type LeaveStatus } from "./types";
 
 export type {
@@ -81,6 +82,14 @@ export function evaluateLeave(input: EvaluateLeaveInput): Evaluation {
     override: input.override === true,
   });
   if (wait) return wait;
+
+  const notice = noticePeriod({
+    startDate,
+    today,
+    noticeDays: input.policy.noticeDays,
+    exception: input.policy.noticeException,
+  });
+  if (notice) return notice;
 
   const days = expandProposedDays(input.entry, {
     consumesBalance,

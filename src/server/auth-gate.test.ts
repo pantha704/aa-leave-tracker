@@ -116,6 +116,24 @@ describe("DAL authorizeAdmin", () => {
     ).toEqual({ status: "ok" });
   });
 
+  it("denies /admin when membership permissions are explicitly empty despite legacy admin role", () => {
+    expect(
+      authorizeAdmin({
+        role: "admin",
+        permissions: [],
+        mustChangePassword: false,
+        active: true,
+      }),
+    ).toEqual({ status: "forbidden" });
+    const res = applyAuthGate(get("/admin"), {
+      kind: "authenticated",
+      role: "admin",
+      permissions: [],
+      mustChangePassword: false,
+    });
+    expect(res.status).toBe(403);
+  });
+
   it("mustChangePassword blocks other pages at the DAL", () => {
     expect(
       mustChangePasswordNow({

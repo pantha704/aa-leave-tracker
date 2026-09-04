@@ -39,6 +39,22 @@ const openPolicy: PolicySnapshot = {
   consumesBalance: true,
 };
 
+describe("notice period in evaluateLeave", () => {
+  it("rejects a future request inside 14 days without an exception", () => {
+    const result = evaluateLeave({
+      employee,
+      entry: { startDate: "2026-06-10", endDate: "2026-06-10", portion: "full" },
+      policy: { ...openPolicy, noticeDays: 14 },
+      balance: openRoom,
+      holidays: [],
+      existing: [],
+      today: TODAY,
+      periodStatuses: [{ year: 2026, status: "open" }],
+    });
+    expect(result).toMatchObject({ ok: false, code: "notice_period" });
+  });
+});
+
 function dayEntry(
   portion: Portion,
   extras: Partial<ProposedLeave> = {},

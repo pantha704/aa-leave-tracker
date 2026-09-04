@@ -170,7 +170,7 @@ describe("withRunningRemaining", () => {
       {
         id: "2",
         leaveTypeId: VACATION,
-        leaveTypeCode: "vacation_unpaid",
+        leaveTypeCode: "pto",
         kind: "usage",
         minutes: -60,
         effectiveOn: "2026-02-02",
@@ -181,7 +181,7 @@ describe("withRunningRemaining", () => {
       {
         id: "1",
         leaveTypeId: VACATION,
-        leaveTypeCode: "vacation_unpaid",
+        leaveTypeCode: "pto",
         kind: "accrual",
         minutes: 680,
         effectiveOn: "2026-02-01",
@@ -301,7 +301,7 @@ describe("assignEmployeePolicy", () => {
       policyId: POLICY,
       policyName: "Vacation",
       leaveTypeId: VACATION,
-      leaveTypeCode: "vacation_unpaid",
+      leaveTypeCode: "pto",
       validFrom: "2026-01-01",
       validTo: null,
     };

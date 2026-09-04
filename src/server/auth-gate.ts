@@ -33,7 +33,7 @@ export function homeForActor(actor: {
   role: EmployeeRole;
   permissions?: readonly Permission[];
 }): string {
-  if (actor.permissions && actor.permissions.length > 0) {
+  if (actor.permissions !== undefined) {
     return canAccessAdminPortal(actor) ? "/admin" : "/me";
   }
   return homeForRole(actor.role);
@@ -67,7 +67,7 @@ export function authorizeAdmin(employee: EmployeeAccess | null | undefined): Adm
   if (employee.mustChangePassword) {
     return { status: "must_change_password" };
   }
-  if (employee.permissions && employee.permissions.length > 0) {
+  if (employee.permissions !== undefined) {
     if (!canAccessAdminPortal(employee)) return { status: "forbidden" };
     return { status: "ok" };
   }
@@ -105,8 +105,12 @@ export function applyAuthGate(request: NextRequest, actor: Actor): NextResponse 
     return NextResponse.redirect(new URL("/login/change-password", request.url));
   }
 
-  if (isAdminPath(pathname) && !canAccessAdminPortal(actor) && actor.role !== "admin") {
-    return new NextResponse("Forbidden", { status: 403 });
+  if (isAdminPath(pathname)) {
+    const portalOk =
+      actor.permissions !== undefined ? canAccessAdminPortal(actor) : actor.role === "admin";
+    if (!portalOk) {
+      return new NextResponse("Forbidden", { status: 403 });
+    }
   }
 
   if ((isLogin || isChangePassword) && !actor.mustChangePassword) {

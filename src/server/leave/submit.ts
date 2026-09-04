@@ -792,6 +792,7 @@ export const dbLeaveStore: LeaveStore = {
         negativeAllowed: policies.negativeAllowed,
         negativeFloorMinutes: policies.negativeFloorMinutes,
         waitingPeriodDays: policies.waitingPeriodDays,
+        noticeDays: policies.noticeDays,
         approvalForRequest: policies.approvalForRequest,
         approvalForLog: policies.approvalForLog,
       })
@@ -906,6 +907,7 @@ export const dbLeaveStore: LeaveStore = {
           negativeAllowed: policyRow.negativeAllowed,
           negativeFloorMinutes: policyRow.negativeFloorMinutes,
           waitingPeriodDays: policyRow.waitingPeriodDays,
+          noticeDays: policyRow.noticeDays,
           approvalForRequest,
           approvalForLog,
           consumesBalance: leaveType.consumesBalance,

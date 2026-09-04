@@ -20,12 +20,19 @@ export const DEMO_SICK_GRANT_MINUTES = DEMO_SICK_DAYS * DEMO_WORKDAY_MINUTES; //
 export const DEMO_MIN_INCREMENT_MINUTES = 60;
 
 export const DEMO_ORG_NAME = "Absolute Addiction";
-export const DEMO_VACATION_TYPE_CODE = "vacation_unpaid";
-export const DEMO_VACATION_TYPE_NAME = "Vacation / Unpaid";
-export const DEMO_VACATION_POLICY_NAME = "Vacation / Unpaid 17d monthly";
+export const DEMO_PTO_TYPE_CODE = "pto";
+/** @deprecated Use DEMO_PTO_TYPE_CODE. Production seed/accrual use pto, not vacation_unpaid. */
+export const DEMO_VACATION_TYPE_CODE = DEMO_PTO_TYPE_CODE;
+export const DEMO_VACATION_TYPE_NAME = "PTO";
+export const DEMO_VACATION_POLICY_NAME = "PTO 17d monthly";
 export const DEMO_SICK_TYPE_CODE = "sick";
 export const DEMO_SICK_TYPE_NAME = "Sick";
 export const DEMO_SICK_POLICY_NAME = "Sick 3d allotment";
+export const DEMO_LWOP_TYPE_CODE = "lwop";
+export const DEMO_LWOP_TYPE_NAME = "Leave Without Pay";
+export const DEMO_LWOP_POLICY_NAME = "LWOP unpaid";
+export const DEMO_PTO_CARRYOVER_MINUTES = 10 * DEMO_WORKDAY_MINUTES; // 4800
+export const DEMO_NOTICE_CALENDAR_DAYS = 14;
 export const DEMO_DEFAULT_ADMIN_EMAIL = "preston@absoluteaddiction.com";
 export const DEMO_DEFAULT_OPERATORS = [
   { email: "preston@absoluteaddiction.com", name: "Preston" },

@@ -10,6 +10,11 @@ import {
   DEMO_SICK_POLICY_NAME,
   DEMO_SICK_TYPE_CODE,
   DEMO_SICK_TYPE_NAME,
+  DEMO_LWOP_TYPE_CODE,
+  DEMO_LWOP_TYPE_NAME,
+  DEMO_LWOP_POLICY_NAME,
+  DEMO_NOTICE_CALENDAR_DAYS,
+  DEMO_PTO_CARRYOVER_MINUTES,
   DEMO_VACATION_GRANT_MINUTES,
   DEMO_VACATION_PERIODIC_MINUTES,
   DEMO_VACATION_POLICY_NAME,
@@ -240,7 +245,7 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
         return person.id;
       }
 
-      const [vacationType, sickType] = await tx
+      const createdTypes = await tx
         .insert(leaveTypes)
         .values([
           {
@@ -257,11 +262,19 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
             consumesBalance: true,
             legalUnit: "days",
           },
+          {
+            orgId: org.id,
+            code: DEMO_LWOP_TYPE_CODE,
+            name: DEMO_LWOP_TYPE_NAME,
+            consumesBalance: false,
+            legalUnit: "days",
+          },
         ])
         .returning({ id: leaveTypes.id, code: leaveTypes.code });
-
-      const vacationId = vacationType.code === DEMO_VACATION_TYPE_CODE ? vacationType.id : sickType.id;
-      const sickId = sickType.code === DEMO_SICK_TYPE_CODE ? sickType.id : vacationType.id;
+      const byCode = new Map(createdTypes.map((row) => [row.code, row.id]));
+      const vacationId = byCode.get(DEMO_VACATION_TYPE_CODE)!;
+      const sickId = byCode.get(DEMO_SICK_TYPE_CODE)!;
+      const lwopId = byCode.get(DEMO_LWOP_TYPE_CODE)!;
 
       const createdPolicies = await tx
         .insert(policies)
@@ -275,6 +288,20 @@ export async function seed(env: SeedEnv = process.env): Promise<void> {
             periodicCadence: "monthly",
             periodicMinutes: DEMO_VACATION_PERIODIC_MINUTES,
             takeCeilingMinutes: DEMO_VACATION_TAKE_CEILING_MINUTES,
+            carryoverMaxMinutes: DEMO_PTO_CARRYOVER_MINUTES,
+            allowForfeit: false,
+            approvalForRequest: "admin",
+            approvalForLog: "none",
+            noticeDays: DEMO_NOTICE_CALENDAR_DAYS,
+            minIncrementMinutes: DEMO_MIN_INCREMENT_MINUTES,
+            effectiveFrom: periodStart,
+          },
+          {
+            orgId: org.id,
+            leaveTypeId: lwopId,
+            name: DEMO_LWOP_POLICY_NAME,
+            grantMode: "none",
+            takeCeilingMinutes: null,
             allowForfeit: false,
             approvalForRequest: "admin",
             approvalForLog: "none",

@@ -16,7 +16,7 @@ const snapshot: ExportSnapshot = {
     },
   ],
   leaveTypes: [
-    { id: "lt-vac", code: "vacation_unpaid", consumesBalance: true, unlimited: false },
+    { id: "lt-vac", code: "pto", consumesBalance: true, unlimited: false },
     { id: "lt-wfh", code: "wfh", consumesBalance: false, unlimited: true },
   ],
   policies: [
@@ -35,7 +35,7 @@ const snapshot: ExportSnapshot = {
       employeeId: "11111111-1111-4111-8111-111111111111",
       leaveTypeId: "lt-vac",
       email: "ada@example.com",
-      leaveTypeCode: "vacation_unpaid",
+      leaveTypeCode: "pto",
       kind: "accrual",
       minutes: 680,
       effectiveOn: "2026-01-01",
@@ -48,7 +48,7 @@ const snapshot: ExportSnapshot = {
     {
       employeeId: "11111111-1111-4111-8111-111111111111",
       email: "ada@example.com",
-      leaveTypeCode: "vacation_unpaid",
+      leaveTypeCode: "pto",
       startDate: "2026-03-02",
       endDate: "2026-03-02",
       totalMinutes: 480,
@@ -82,7 +82,7 @@ describe("export CSV builders", () => {
 
   it("balances skip non-consuming types", () => {
     const csv = balancesToCsv(snapshot, snapshot.employees, "2026-06-15");
-    expect(csv).toContain("vacation_unpaid");
+    expect(csv).toContain("pto");
     expect(csv).not.toContain("wfh");
     expect(csvHeaderColumns(csv)).toContain("remaining_hours");
   });

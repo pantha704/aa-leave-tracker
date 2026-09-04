@@ -21,7 +21,7 @@ function world(overrides: Partial<ImportWorld> = {}): ImportWorld {
       },
     ],
     leaveTypes: [
-      { id: VACATION, code: "vacation_unpaid", name: "Vacation / Unpaid", consumesBalance: true },
+      { id: VACATION, code: "pto", name: "PTO", consumesBalance: true },
       { id: SICK, code: DEMO_SICK_TYPE_CODE, name: "Sick", consumesBalance: true },
     ],
     policies: [
@@ -47,7 +47,7 @@ describe("dry-run opening remaining", () => {
   it("plans adjustment only, never grant_lump, including 0 remaining", () => {
     const csv = [
       "email,leave_type,as_of,remaining_hours",
-      "ada@example.com,vacation_unpaid,2026-03-01,0",
+      "ada@example.com,pto,2026-03-01,0",
     ].join("\n");
     const result = dryRunImport(csv, "opening", openingMap, world());
     expect(result.ok).toBe(true);
@@ -137,7 +137,7 @@ describe("dry-run opening remaining", () => {
   it("diffs app remaining vs the sheet remaining column", () => {
     const csv = [
       "email,leave_type,as_of,remaining_hours",
-      "ada@example.com,vacation_unpaid,2026-03-01,10.00",
+      "ada@example.com,pto,2026-03-01,10.00",
     ].join("\n");
     const result = dryRunImport(
       csv,
@@ -164,7 +164,7 @@ describe("dry-run opening remaining", () => {
       {
         line: 2,
         email: "ada@example.com",
-        leaveType: "vacation_unpaid",
+        leaveType: "pto",
         asOf: "2026-03-01",
         sheetRemainingMinutes: 600,
         appRemainingMinutes: 480,
@@ -178,7 +178,7 @@ describe("dry-run historical entries", () => {
   it("plans approved + immutable historical entries and usage", () => {
     const csv = [
       "email,leave_type,start,end,hours,portion",
-      "ada@example.com,vacation_unpaid,2026-03-02,2026-03-02,8.00,full",
+      "ada@example.com,pto,2026-03-02,2026-03-02,8.00,full",
     ].join("\n");
     const result = dryRunImport(
       csv,
@@ -205,8 +205,8 @@ describe("dry-run historical entries", () => {
   it("hard-fails occupancy overlap in dry-run, including in-file duplicates", () => {
     const csv = [
       "email,leave_type,start,end,hours,portion",
-      "ada@example.com,vacation_unpaid,2026-03-02,2026-03-02,8.00,full",
-      "ada@example.com,vacation_unpaid,2026-03-02,2026-03-02,4.00,am",
+      "ada@example.com,pto,2026-03-02,2026-03-02,8.00,full",
+      "ada@example.com,pto,2026-03-02,2026-03-02,4.00,am",
     ].join("\n");
     const map = {
       email: "email",
@@ -223,7 +223,7 @@ describe("dry-run historical entries", () => {
     const existing = dryRunImport(
       [
         "email,leave_type,start,end,hours,portion",
-        "ada@example.com,vacation_unpaid,2026-03-02,2026-03-02,8.00,full",
+        "ada@example.com,pto,2026-03-02,2026-03-02,8.00,full",
       ].join("\n"),
       "entries",
       map,
@@ -247,7 +247,7 @@ describe("dry-run historical entries", () => {
   it("skips usage when an import opening already exists for that year", () => {
     const csv = [
       "email,leave_type,start,end,hours,portion",
-      "ada@example.com,vacation_unpaid,2026-03-02,2026-03-02,8.00,full",
+      "ada@example.com,pto,2026-03-02,2026-03-02,8.00,full",
     ].join("\n");
     const result = dryRunImport(
       csv,
@@ -283,7 +283,7 @@ describe("dry-run historical entries", () => {
   it("unknown emails become error rows, not silent creates", () => {
     const csv = [
       "email,leave_type,as_of,remaining_hours",
-      "missing@example.com,vacation_unpaid,2026-03-01,8",
+      "missing@example.com,pto,2026-03-01,8",
     ].join("\n");
     const result = dryRunImport(csv, "opening", openingMap, world());
     expect(result.ok).toBe(false);

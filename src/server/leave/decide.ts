@@ -144,6 +144,10 @@ export async function decideLeave(
         return fail(423, APP_READONLY_CODE, APP_READONLY_MESSAGE);
       }
 
+      if (input.action === "reject" && !String(input.adminNote ?? "").trim()) {
+        return fail(422, "DECISION_COMMENT_REQUIRED", "A decision comment is required to reject");
+      }
+
       if (input.action === "approve") {
         const frozen = evaluateFrozenDays({
           entry,

@@ -25,6 +25,7 @@ describe("selectEmployeeForOrg", () => {
 
   it("fails closed on unknown selector or ambiguous memberships", () => {
     expect(selectEmployeeForOrg(rows, "org-c")).toBeUndefined();
+    expect(selectEmployeeForOrg(rows, "org-unknown")).toBeUndefined();
     expect(selectEmployeeForOrg(rows, undefined)).toBeUndefined();
     expect(selectEmployeeForOrg(rows.filter((row) => row.orgId === "org-a"), undefined)?.id).toBe(
       "emp-a",

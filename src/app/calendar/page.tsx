@@ -10,7 +10,7 @@ import {
   shiftYearMonth,
   type CalendarPerson,
 } from "@/server/calendar";
-import { authzActorFromEmployee, canAdmin } from "@/server/authz";
+import { canAdmin } from "@/server/authz";
 import { setTeamCalendarEnabledAction, setTeamCalendarShowTypeAction } from "./actions";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
@@ -28,7 +28,7 @@ function portionLabel(portion: string): string | null {
 }
 
 export default async function CalendarPage({ searchParams }: PageProps<"/calendar">) {
-  const { employee } = await requireEmployee();
+  const { employee, actor } = await requireEmployee();
   const params = await searchParams;
   const ctx = await defaultCalendarStore.loadOrgContext(employee.orgId);
   const parsed = parseCalendarMonth(
@@ -37,7 +37,6 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
     ctx?.timezone ?? "UTC",
   );
 
-  const actor = authzActorFromEmployee(employee);
   const isAdmin = canAdmin(actor);
   const yearMonth = "error" in parsed ? null : parsed;
   const cells = yearMonth ? monthCells(yearMonth.year, yearMonth.month) : [];

@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/server/auth";
-import { authzActorFromEmployee } from "@/server/authz";
 import type { ColumnMap, ImportKind } from "@/server/import/csv";
 import { parseCsvRecords } from "@/server/holidays/csv";
 import {
@@ -92,7 +91,7 @@ export async function previewImportAction(
   _prev: ImportFormState,
   formData: FormData,
 ): Promise<ImportFormState> {
-  const { employee } = await requireAdmin();
+  const { employee, actor } = await requireAdmin();
   const kind = asKind(formData.get("kind"));
   const csv = String(formData.get("csv") ?? "");
   const filename = String(formData.get("filename") ?? "import.csv");
@@ -119,7 +118,7 @@ export async function commitImportAction(
   _prev: ImportFormState,
   formData: FormData,
 ): Promise<ImportFormState> {
-  const { employee } = await requireAdmin();
+  const { employee, actor } = await requireAdmin();
   const kind = asKind(formData.get("kind"));
   const csv = String(formData.get("csv") ?? "");
   const filename = String(formData.get("filename") ?? "import.csv");
@@ -128,7 +127,7 @@ export async function commitImportAction(
   const result = await commitImport(
     {
       orgId: employee.orgId,
-      actor: authzActorFromEmployee(employee),
+      actor,
       kind,
       csv,
       map: mapFromForm(formData, kind),
@@ -163,11 +162,11 @@ export async function reverseImportAction(
   _prev: ReverseFormState,
   formData: FormData,
 ): Promise<ReverseFormState> {
-  const { employee } = await requireAdmin();
+  const { employee, actor } = await requireAdmin();
   const batchId = String(formData.get("batchId") ?? "");
   if (!batchId) return { ok: false, error: "import batch is required" };
   const result = await reverseImportBatch(
-    { orgId: employee.orgId, batchId, actor: authzActorFromEmployee(employee) },
+    { orgId: employee.orgId, batchId, actor },
     dbImportStore,
   );
   if (!result.ok) return { ok: false, error: result.error };

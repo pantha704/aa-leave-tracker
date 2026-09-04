@@ -22,6 +22,7 @@ describe("permission catalogue", () => {
     expect(permissionsForLegacyRole("admin")).toEqual(ROLE_PERMISSIONS.org_admin);
     expect(hasPermission({ role: "admin" }, "organization.manage")).toBe(true);
     expect(hasPermission({ role: "employee" }, "organization.manage")).toBe(false);
+    expect(hasPermission({ role: "admin", permissions: [] }, "organization.manage")).toBe(false);
     expect(PERMISSIONS).toContain("leave.approve.direct_reports");
   });
 });

@@ -1,0 +1,180 @@
+version: 1
+project: aa-leave-tracker
+baseline_sha: 9efcd068b0804f621fb56897eff5a7b2a63205f0
+rule: "No production release with any mandatory criterion failing or any Critical/High unresolved issue."
+
+criteria:
+  architecture:
+    - id: ARCH-001
+      mandatory: true
+      requirement: "Modular monolith retained; no unjustified distributed infrastructure."
+    - id: ARCH-002
+      mandatory: true
+      requirement: "No production policy behavior depends on DEMO magic codes such as vacation_unpaid."
+    - id: ARCH-003
+      mandatory: true
+      requirement: "Leave type and accounting balance bucket are separable/composable."
+    - id: ARCH-004
+      mandatory: true
+      requirement: "Policies and approval workflow definitions are effective-dated/versioned or otherwise immutable for historical requests."
+
+  tenancy_authz:
+    - id: AUTHZ-001
+      mandatory: true
+      requirement: "Membership-derived permissions are canonical on every protected server path."
+    - id: AUTHZ-002
+      mandatory: true
+      requirement: "employees.role/legacy role fallback grants no production authority after migration."
+    - id: AUTHZ-003
+      mandatory: true
+      requirement: "One identity can belong to two orgs with different/multiple roles; tests prove isolation."
+    - id: AUTHZ-004
+      mandatory: true
+      requirement: "Cross-org guessed IDs are denied across reads and writes."
+    - id: AUTHZ-005
+      mandatory: true
+      requirement: "Self-approval is impossible for manager, HR, executive and org admin."
+    - id: AUTHZ-006
+      mandatory: true
+      requirement: "Reporting relationships are org-safe and effective-dated."
+    - id: AUTHZ-007
+      mandatory: true
+      requirement: "Custom role permission bundles are actually honored by server authorization."
+
+  policy:
+    - id: PTO-001
+      mandatory: true
+      requirement: "PTO is distinct and annual accrual cannot exceed 8160 minutes."
+    - id: PTO-002
+      mandatory: true
+      requirement: "Sick is distinct, annual non-accruing allocation is 1440 minutes."
+    - id: PTO-003
+      mandatory: true
+      requirement: "LWOP is distinct and consumes no paid PTO balance."
+    - id: PTO-004
+      mandatory: true
+      requirement: "Carryover max is 4800 PTO minutes."
+    - id: PTO-005
+      mandatory: true
+      requirement: "Jan 1, fourth Thursday Nov and Dec 25 are excluded from deductions."
+    - id: PTO-006
+      mandatory: true
+      requirement: "14-calendar-day notice rule enforced with explicit emergency/medical override record."
+    - id: PTO-007
+      mandatory: true
+      requirement: "Probation and notice-period restrictions implemented with audited override."
+    - id: PTO-008
+      mandatory: true
+      requirement: "Normal PTO routes Manager; >2 to <=3 weeks additionally routes Executive."
+    - id: PTO-009
+      mandatory: true
+      requirement: "Sick >2 consecutive workdays flags documentation may be required."
+    - id: PTO-010
+      mandatory: true
+      requirement: "LWOP requires qualifying condition plus Manager and HR approval."
+    - id: PTO-011
+      mandatory: true
+      requirement: "Make-up time is separate from PTO ledger."
+    - id: PTO-012
+      mandatory: false
+      feature_gate_allowed: true
+      requirement: "Parental leave multi-component model implemented; production enablement may remain gated pending HR interpretation of ambiguous wording."
+
+  workflow_accounting:
+    - id: FLOW-001
+      mandatory: true
+      requirement: "Rejection reason is non-empty and immutable decision history is retained."
+    - id: FLOW-002
+      mandatory: true
+      requirement: "Final approval + usage ledger + audit + outbox write are atomic."
+    - id: FLOW-003
+      mandatory: true
+      requirement: "Cancellation/reopen produce reversal entries, never delete historical accounting."
+    - id: FLOW-004
+      mandatory: true
+      requirement: "Concurrent approvals cannot double-post usage."
+    - id: FLOW-005
+      mandatory: true
+      requirement: "All automated ledger jobs have deterministic idempotency keys/constraints."
+
+  notifications:
+    - id: MAIL-001
+      mandatory: true
+      requirement: "Request notification routes Manager and HR according to policy."
+    - id: MAIL-002
+      mandatory: true
+      requirement: "Decision notification routes Employee and HR."
+    - id: MAIL-003
+      mandatory: true
+      requirement: "Notifications use durable outbox/retry; provider outage does not fail/duplicate business transaction."
+
+  security:
+    - id: SEC-001
+      mandatory: true
+      requirement: "No Critical/High authorization/security finding remains."
+    - id: SEC-002
+      mandatory: true
+      requirement: "Privileged production accounts use MFA or production release is explicitly blocked until configured."
+    - id: SEC-003
+      mandatory: true
+      requirement: "Login/sensitive endpoint rate limiting is not only in-process memory."
+    - id: SEC-004
+      mandatory: true
+      requirement: "Secrets are environment-scoped and secret scanning is enabled where available."
+    - id: SEC-005
+      mandatory: true
+      requirement: "CSP/cookie/security headers verified by tests."
+    - id: SEC-006
+      mandatory: true
+      requirement: "Sensitive medical content is not unnecessarily stored/logged."
+
+  quality:
+    - id: QA-001
+      mandatory: true
+      requirement: "lint passes."
+    - id: QA-002
+      mandatory: true
+      requirement: "typecheck passes."
+    - id: QA-003
+      mandatory: true
+      requirement: "production build passes."
+    - id: QA-004
+      mandatory: true
+      requirement: "unit tests pass."
+    - id: QA-005
+      mandatory: true
+      requirement: "real PostgreSQL integration/concurrency tests pass."
+    - id: QA-006
+      mandatory: true
+      requirement: "fresh migration and previous-schema upgrade tests pass."
+    - id: QA-007
+      mandatory: true
+      requirement: "critical E2E flows pass."
+
+  operations:
+    - id: OPS-001
+      mandatory: true
+      requirement: "dev/staging/production DBs and secrets are isolated."
+    - id: OPS-002
+      mandatory: true
+      requirement: "managed production backups/PITR configured and restore drill performed."
+    - id: OPS-003
+      mandatory: true
+      requirement: "liveness and readiness health semantics implemented."
+    - id: OPS-004
+      mandatory: true
+      requirement: "scheduled jobs are protected, observable and idempotent."
+    - id: OPS-005
+      mandatory: true
+      requirement: "deployment and rollback runbook validated on staging."
+
+  documentation:
+    - id: DOC-001
+      mandatory: true
+      requirement: "README matches actual production architecture/setup."
+    - id: DOC-002
+      mandatory: true
+      requirement: "Policy-to-code/test traceability matrix exists."
+    - id: DOC-003
+      mandatory: true
+      requirement: "Architecture decisions and known limitations documented."

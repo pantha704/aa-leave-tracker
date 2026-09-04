@@ -3,7 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { assignEmployeePolicy, findLeaveEntryInOrg, postAdjustment } from "@/server/admin/employees";
 import { requireAdmin } from "@/server/auth";
-import { authzActorFromEmployee } from "@/server/authz";
 import { decideLeave, type DecideAction } from "@/server/leave/decide";
 import { terminateEmployee } from "@/server/terminate";
 
@@ -24,10 +23,10 @@ export async function adjustHoursAction(
   _prev: AdminFormState,
   formData: FormData,
 ): Promise<AdminFormState> {
-  const { employee } = await requireAdmin();
+  const { employee, actor } = await requireAdmin();
   const employeeId = String(formData.get("employeeId") ?? "");
   const result = await postAdjustment({
-    actor: authzActorFromEmployee(employee),
+    actor,
     orgId: employee.orgId,
     employeeId,
     raw: {
@@ -46,10 +45,10 @@ export async function assignPolicyAction(
   _prev: AdminFormState,
   formData: FormData,
 ): Promise<AdminFormState> {
-  const { employee } = await requireAdmin();
+  const { employee, actor } = await requireAdmin();
   const employeeId = String(formData.get("employeeId") ?? "");
   const result = await assignEmployeePolicy({
-    actor: authzActorFromEmployee(employee),
+    actor,
     orgId: employee.orgId,
     employeeId,
     raw: {
@@ -67,7 +66,7 @@ export async function decideEntryAction(
   _prev: AdminFormState,
   formData: FormData,
 ): Promise<AdminFormState> {
-  const { employee } = await requireAdmin();
+  const { employee, actor } = await requireAdmin();
   const entryId = String(formData.get("entryId") ?? "");
   const employeeId = String(formData.get("employeeId") ?? "");
   const action = String(formData.get("action") ?? "") as DecideAction;
@@ -77,7 +76,7 @@ export async function decideEntryAction(
   if (!scoped) return { ok: false, error: "leave entry not found" };
 
   const result = await decideLeave({
-    actor: authzActorFromEmployee(employee),
+    actor,
     entryId,
     action,
     adminNote: String(formData.get("adminNote") ?? "").trim() || undefined,
@@ -92,10 +91,10 @@ export async function terminateEmployeeAction(
   _prev: AdminFormState,
   formData: FormData,
 ): Promise<AdminFormState> {
-  const { employee } = await requireAdmin();
+  const { employee, actor } = await requireAdmin();
   const employeeId = String(formData.get("employeeId") ?? "");
   const result = await terminateEmployee({
-    actor: authzActorFromEmployee(employee),
+    actor,
     orgId: employee.orgId,
     employeeId,
     raw: {

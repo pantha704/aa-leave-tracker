@@ -2,7 +2,6 @@ import { CancelEntryButton } from "@/components/cancel-entry-button";
 import { LeaveForm } from "@/components/leave-form";
 import { formatUnitPair } from "@/lib/hours";
 import { requireEmployee } from "@/server/auth";
-import { authzActorFromEmployee } from "@/server/authz";
 import { loadMyLeavePage } from "@/server/me";
 import { getOrgSettings } from "@/server/settings";
 
@@ -34,8 +33,7 @@ function UnitAmount({
 }
 
 export default async function MePage() {
-  const { employee } = await requireEmployee();
-  const actor = authzActorFromEmployee(employee);
+  const { employee, actor } = await requireEmployee();
   const [page, settings] = await Promise.all([
     loadMyLeavePage(actor),
     getOrgSettings(employee.orgId),

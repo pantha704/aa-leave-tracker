@@ -2,14 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/server/auth";
-import { authzActorFromEmployee } from "@/server/authz";
 import { updateTeamCalendarFlags } from "@/server/calendar";
 
 export async function setTeamCalendarEnabledAction(formData: FormData): Promise<void> {
-  const { employee } = await requireAdmin();
+  const { employee, actor } = await requireAdmin();
   const enabled = String(formData.get("enabled") ?? "") === "true";
   const result = await updateTeamCalendarFlags({
-    actor: authzActorFromEmployee(employee),
+    actor,
     orgId: employee.orgId,
     enabled,
   });
@@ -18,10 +17,10 @@ export async function setTeamCalendarEnabledAction(formData: FormData): Promise<
 }
 
 export async function setTeamCalendarShowTypeAction(formData: FormData): Promise<void> {
-  const { employee } = await requireAdmin();
+  const { employee, actor } = await requireAdmin();
   const showType = String(formData.get("showType") ?? "") === "true";
   const result = await updateTeamCalendarFlags({
-    actor: authzActorFromEmployee(employee),
+    actor,
     orgId: employee.orgId,
     showType,
   });

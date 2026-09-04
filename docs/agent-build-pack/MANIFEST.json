@@ -1,0 +1,87 @@
+[
+  {
+    "file": "01_MASTER_AGENT_PROMPT.md",
+    "sha256": "02d6d90b37be098e2a54ecea3eaa1176165bc5e9d0e5561d1816aba5e9137125",
+    "bytes": 3603
+  },
+  {
+    "file": "02_CURRENT_REPO_AUDIT.md",
+    "sha256": "07ce5a262f6d6113f8d9992979a34573745c08b8ee95f7da988b8984ca0957c4",
+    "bytes": 5272
+  },
+  {
+    "file": "03_TARGET_ARCHITECTURE.md",
+    "sha256": "aeea503a3f8b0713b84e0c990e4a41e36d46a63fe0b7c745eae89a40551dbb61",
+    "bytes": 4730
+  },
+  {
+    "file": "04_DOMAIN_AND_SCHEMA_SPEC.md",
+    "sha256": "947d20b1a29d149c6b73aad38c6be857b688a3f5d112b707cd53b0fff16c1483",
+    "bytes": 6026
+  },
+  {
+    "file": "05_AUTHORIZATION_AND_TENANCY.md",
+    "sha256": "fb358e6330c62488310b2c8f34ec5acc619ce7b23930ec08a14f73e4a4daa2be",
+    "bytes": 4272
+  },
+  {
+    "file": "06_PTO_POLICY_REQUIREMENTS.md",
+    "sha256": "e421af4bdd33cf65f2d0452c50e11963ea1ce79321e68a381d609d5ae651b4d0",
+    "bytes": 4081
+  },
+  {
+    "file": "07_WORKFLOW_LEDGER_JOBS.md",
+    "sha256": "64c1e81b4a160eda4195fa2a52641334754c90b366c0c3461aedd835826589bd",
+    "bytes": 3887
+  },
+  {
+    "file": "08_SECURITY_RELIABILITY.md",
+    "sha256": "7ff00e4db7917b34f90b50575f7ac68547e2a33f23f091618edc23bf69697914",
+    "bytes": 4272
+  },
+  {
+    "file": "09_TEST_AND_QUALITY_GATES.md",
+    "sha256": "38fdd8fcfcb57fd4d06a410eafc640f3e68eab2f8642d1506065d9fda6c61961",
+    "bytes": 3678
+  },
+  {
+    "file": "10_CI_CD_DEPLOYMENT_RUNBOOK.md",
+    "sha256": "c1e0527f27d24c4c36b41532155fa95c4f72eea3f982724309fedb724b9bc7f6",
+    "bytes": 3517
+  },
+  {
+    "file": "11_EXECUTION_PHASES.md",
+    "sha256": "74f6822bd0be817161f36541b6d4c1a592612b4b6d3d19ab8434f27e5bee9551",
+    "bytes": 4143
+  },
+  {
+    "file": "12_DEFINITION_OF_DONE.md",
+    "sha256": "6a1a2bbf5bb1816b8202a75fc86c920d5628ca63e8c1443994c54a2c67fb3d4d",
+    "bytes": 3289
+  },
+  {
+    "file": "13_AGENT_ITERATION_PROTOCOL.md",
+    "sha256": "64e4232aed0672ed99f8d261a06e35831441b26b699b9542c57c583ee54398fe",
+    "bytes": 3063
+  },
+  {
+    "file": "14_RISK_REGISTER_AND_ADRS.md",
+    "sha256": "8e7a0e49991a901229cd70d64120acbb54275df8d7bcfdacaa8c2ee543d7b287",
+    "bytes": 5005
+  },
+  {
+    "file": "AGENT_HANDOFF.txt",
+    "sha256": "b352ca72b1459acb605dfadc3906d8cc4542dead8d8f091f2613c5b973e64b9e",
+    "bytes": 842
+  },
+  {
+    "file": "README.md",
+    "sha256": "34a4ee4507e77cfbdeb89b10091a9799ff416e8f292772279eba035ade4562a8",
+    "bytes": 2705
+  },
+  {
+    "file": "acceptance_criteria.yaml",
+    "sha256": "b762e9081498e343fdc00146a3f53e317dc10d94469a013b7e73bd4d0e41b55f",
+    "bytes": 6887
+  }
+]

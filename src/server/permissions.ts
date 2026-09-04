@@ -123,7 +123,7 @@ export type PermissionHolder = {
 
 export function resolvedPermissions(holder: PermissionHolder | null | undefined): readonly Permission[] {
   if (!holder) return [];
-  if (holder.permissions && holder.permissions.length > 0) return holder.permissions;
+  if (holder.permissions !== undefined) return holder.permissions;
   if (holder.role) return permissionsForLegacyRole(holder.role);
   return [];
 }

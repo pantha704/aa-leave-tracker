@@ -1,0 +1,7 @@
+Build `pantha704/aa-leave-tracker` to production readiness using this zip as the implementation contract.
+
+Start with `01_MASTER_AGENT_PROMPT.md`, then read the rest in order. Re-read the actual latest repo before coding because the audited baseline is main@9efcd068b0804f621fb56897eff5a7b2a63205f0.
+
+Do not stop at a checklist implementation. Iterate: inspect -> design critique -> implement -> migrate -> test -> adversarial review -> fix -> full gate. Continue until every mandatory item in `acceptance_criteria.yaml` passes with evidence and there are zero unresolved Critical/High issues.
+
+Most urgent first: finish the multi-org authorization migration. Membership-derived permissions must become canonical everywhere; remove production authority/fallback from legacy `employees.role` before building more policy behavior on top of it.

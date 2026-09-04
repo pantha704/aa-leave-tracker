@@ -21,9 +21,12 @@ describe("selectEmployeeForOrg", () => {
     expect(selectEmployeeForOrg(rows, "org-a")?.id).toBe("emp-a");
   });
 
-  it("ignores inactive memberships and unknown org ids", () => {
-    expect(selectEmployeeForOrg(rows, "org-c")?.id).toBe("emp-a");
-    expect(selectEmployeeForOrg(rows, undefined)?.id).toBe("emp-a");
+  it("fails closed on unknown selector or ambiguous memberships", () => {
+    expect(selectEmployeeForOrg(rows, "org-c")).toBeUndefined();
+    expect(selectEmployeeForOrg(rows, undefined)).toBeUndefined();
+    expect(selectEmployeeForOrg(rows.filter((row) => row.orgId === "org-a"), undefined)?.id).toBe(
+      "emp-a",
+    );
     expect(selectEmployeeForOrg([], "org-a")).toBeUndefined();
   });
 });

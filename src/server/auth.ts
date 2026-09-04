@@ -210,7 +210,8 @@ export async function requireEmployee() {
     redirect("/login/change-password");
   }
 
-  return { session, employee };
+  const actor = await toAuthzActor(employee);
+  return { session, employee, actor };
 }
 
 export async function requireAdmin() {
@@ -235,5 +236,5 @@ export async function requireAdmin() {
     forbidden();
   }
 
-  return { session, employee: employee! };
+  return { session, employee: employee!, actor: actor! };
 }

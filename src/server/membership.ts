@@ -7,12 +7,7 @@ import {
 import { employees } from "@/db/schema";
 import { getDb } from "./db";
 import { isUndefinedTable } from "./pg-error";
-import {
-  parsePermissions,
-  permissionsForLegacyRole,
-  type Permission,
-  type RoleKey,
-} from "./permissions";
+import { parsePermissions, type Permission, type RoleKey } from "./permissions";
 import type { EmployeeRole } from "./auth-gate";
 import type { AuthzActor } from "./authz";
 
@@ -30,17 +25,7 @@ export function pickOrgId(headerList: Headers, fallback?: string | null): string
   return headerOrg || cookieOrg || fallback || undefined;
 }
 
-function legacyPermissions(legacyRole: string): readonly Permission[] {
-  if (legacyRole === "admin" || legacyRole === "manager" || legacyRole === "employee") {
-    return permissionsForLegacyRole(legacyRole);
-  }
-  return permissionsForLegacyRole("employee");
-}
-
-export async function permissionsForEmployee(
-  employeeId: string,
-  legacyRole: string,
-): Promise<readonly Permission[]> {
+export async function permissionsForEmployee(employeeId: string): Promise<readonly Permission[]> {
   try {
     const db = getDb();
     const rows = await db
@@ -50,15 +35,13 @@ export async function permissionsForEmployee(
       .innerJoin(organizationRoles, eq(organizationRoles.id, membershipRoles.roleId))
       .where(eq(organizationMemberships.employeeId, employeeId));
 
-    if (rows.length === 0) return legacyPermissions(legacyRole);
-
     const merged: string[] = [];
     for (const row of rows) {
       merged.push(...row.permissions);
     }
     return parsePermissions(merged);
   } catch (err) {
-    if (isUndefinedTable(err)) return legacyPermissions(legacyRole);
+    if (isUndefinedTable(err)) return [];
     throw err;
   }
 }
@@ -158,7 +141,7 @@ export async function toAuthzActor(employee: {
     id: employee.id,
     organizationId: employee.orgId,
     role,
-    permissions: await permissionsForEmployee(employee.id, role),
+    permissions: await permissionsForEmployee(employee.id),
   };
 }
 
@@ -184,7 +167,8 @@ export function selectEmployeeForOrg<T extends { orgId: string; active: boolean 
 ): T | undefined {
   const active = rows.filter((row) => row.active);
   if (preferredOrgId) {
-    return active.find((row) => row.orgId === preferredOrgId) ?? active[0];
+    return active.find((row) => row.orgId === preferredOrgId);
   }
-  return active[0];
+  if (active.length === 1) return active[0];
+  return undefined;
 }

@@ -1,10 +1,5 @@
 import type { EmployeeRole } from "./auth-gate";
-import {
-  hasPermission,
-  permissionsForLegacyRole,
-  type Permission,
-  type PermissionHolder,
-} from "./permissions";
+import { hasPermission, type Permission, type PermissionHolder } from "./permissions";
 
 export type AuthzActor = PermissionHolder & {
   id: string;
@@ -12,21 +7,6 @@ export type AuthzActor = PermissionHolder & {
   role?: EmployeeRole;
   permissions?: readonly Permission[];
 };
-
-export function authzActorFromEmployee(employee: {
-  id: string;
-  orgId: string;
-  role: string;
-}): AuthzActor {
-  const role: EmployeeRole =
-    employee.role === "admin" || employee.role === "manager" ? employee.role : "employee";
-  return {
-    id: employee.id,
-    organizationId: employee.orgId,
-    role,
-    permissions: permissionsForLegacyRole(role),
-  };
-}
 
 export type LeaveEntryAuthz = {
   employeeId: string;
